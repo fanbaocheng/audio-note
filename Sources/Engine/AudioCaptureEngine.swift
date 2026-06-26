@@ -59,7 +59,7 @@ private final class CaptureState {
 // MARK: - AudioCaptureEngine
 //
 // 完整迁移自 AudioTranscriber.AudioRecorder（AUHAL 系统音频采集引擎）。
-// 适配 UniAudio/AudioNote：
+// 适配 AudioNote：
 //   - 类名固定为 `AudioCaptureEngine` 以保持现有 UI/SettingsView/RecordView 兼容
 //   - 提供 `static let shared` 单例（UI 依赖）
 //   - 路径默认 `~/Documents/AudioNote/Recordings`
@@ -404,7 +404,7 @@ final class AudioCaptureEngine: ObservableObject {
         return nil
     }
 
-    // MARK: - 便捷方法（兼容 UniAudio 现有 UI）
+    // MARK: - 便捷方法（兼容 AudioNote 现有 UI）
 
     /// `MM:SS` 或 `H:MM:SS` 格式
     func formattedElapsed() -> String {

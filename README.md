@@ -147,7 +147,7 @@ WorkBuddy 会自动把这条变成一个 RRULE 自动化跑起来。其它 Agent
 ## 📁 目录结构
 
 ```
-UniAudio/                          # 工程根（GitHub 仓库名 audio-note）
+AudioNote/                         # 工程根（GitHub 仓库名 audio-note）
 ├── Package.swift                  # SwiftPM manifest（macOS 13+，executable target AudioNote）
 ├── README.md                      # 本文件
 ├── ARCHITECTURE.md                # 架构 / 数据流 / 关键设计决策

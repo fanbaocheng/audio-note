@@ -11,9 +11,9 @@ import Foundation
 /// - 错误归纳：`summarizeError` 把 yt-dlp 的乱序 stderr 提炼成一句给用户看的提示
 /// - 元信息：`--print` 模板 + `⟦|⟧` 罕见分隔符（避免 title/uploader 含 `|` 导致解析炸）
 ///
-/// 适配 UniAudio：
+/// 适配 AudioNote：
 /// - 类签名沿用 `DownloadEngine`，提供 `static let shared` 单例
-/// - 入参从 `DownloadTask` 改为 `UniTask`（沿用现有 UniAudio 模型）
+/// - 入参从 `DownloadTask` 改为 `UniTask`（沿用现有 AudioNote 模型）
 /// - 路径设置改走 `Config` 包结构，UnifiedPipeline 直接传 `config`
 /// - 日志改走 Logger.download（替代 MD 的 `AppLog`）
 /// - 错误类型对齐 `EngineError`（已在 AudioProcessingEngine.swift 扩展 cancelled / parseFailed）
