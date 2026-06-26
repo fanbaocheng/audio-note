@@ -8,6 +8,8 @@
 
 ## ✨ 它能做什么
 
+### 核心能力
+
 - **🎬 从链接直接转写**：粘贴 B 站 / YouTube / 抖音 / 小红书 / 微博 URL → 自动下载音频 → 自动转写成 txt
 - **🎙️ 系统音频录制**：通过 BlackHole 等虚拟声卡（loopback 设备）+ Core Audio AUHAL 抓系统输出，可同时混入麦克风；启动录制时自动把系统输出路由到「BlackHole + 耳机」多输出设备，不影响正常听音
 - **📝 离线本地转写**：sherpa-onnx + SenseVoice 模型，全程本地推理，不上传任何数据
@@ -16,13 +18,47 @@
 - **⏯️ 任务队列**：下载 / 录制 / 转写统一调度，全部支持暂停、继续、重试、取消、置顶
 - **📊 双阶段计时**：下载进度 / 下载耗时 / 转写进度 / 转写耗时 / 进行中预估剩余时间，全程可见
 
+### 🤖 与 Agent 联动（推荐玩法）
+
+AudioNote 只做最稳的事 —— **把"声音"变成"文本"**，并把 txt 文件落到一个固定目录。**总结、提炼、整理** 这件事交给上层 Agent（[WorkBuddy](https://www.codebuddy.cn/workbuddy) / Claude Code / Cursor / 自建 LLM pipeline 都行），让 AudioNote 成为你 Agent 工作流的「音频入口」。
+
+**典型联动方式**：在 WorkBuddy / 其它 Agent 里配置一个**定时任务**（cron / launchd / Agent 平台的 schedule），周期性扫描 AudioNote 的转写输出目录（默认 `~/Documents/AudioNote/transcripts/`），发现新增 `.txt` 就触发一个**总结 Skill**，自动把这段录音/视频整理成结构化笔记。
+
+**按场景写不同的总结 Skill**：
+
+| 场景 | 输入 | Skill 产出 |
+|---|---|---|
+| 会议录音 | 会议系统音频 + 麦克风混音 | **会议纪要**：议题/决定/行动项（owner+deadline）/风险/待跟进 |
+| 直播课程 / 技术分享 | B 站直播回放 URL / 录屏系统音频 | **课程笔记**：知识点大纲 / 重点代码片段 / 引用资料 / 习题 |
+| 播客 / 人物访谈 | 播客 RSS / YouTube URL | **人物观点 + 金句卡片**：嘉宾立场 / 论据链 / 可引用金句 |
+| 自言自语备忘 | 麦克风录制 | **TODO 提取**：把碎碎念里的待办、想法、灵感分类落到 PKM |
+
+**ASR 准确率补偿**（重要）：
+
+AudioNote 用的是 sherpa-onnx + SenseVoice 本地小模型，**离线、隐私 OK，但识别准确率约 85–92%**，专有名词、英文术语、人名、数字常有错。在 Skill 的 prompt 里**必须加事实校验约束**，否则错误会被 LLM 总结放大。建议至少包含这几条：
+
+1. **不要直接复述 ASR 文本**：先做事实纠错——根据上下文推断专有名词、人名、技术术语的正确写法，可疑处标 `[?]` 而非编造
+2. **挂载领域知识库**：把你常用的项目代号、同事英文名、技术栈词表、行业黑话喂给 LLM（WorkBuddy 的 PKM / Cursor 的 codebase / Claude 的 Project knowledge 都行），强制 Skill 在总结时引用这份知识库做校对
+3. **数字 / 日期 / URL 二次校验**：金额、版本号、时间点这类强结构信息，Skill 要单独抽出来标记"低置信度，请人工确认"
+4. **保留可追溯性**：总结里关键论断附带原文片段（行号/时间戳），方便回溯——这样即使 LLM 误读，也能快速发现
+
+**示例：WorkBuddy 上配置定时扫描任务**（一句话指令）：
+
+> *"每 10 分钟扫描一次 `~/Documents/AudioNote/transcripts/` ，对今天新增的 `.txt` 文件调用 `meeting-minutes` skill 生成纪要并归档到 PKM；处理过的文件在文件名追加 `.processed` 后缀避免重复处理"*
+
+WorkBuddy 会自动把这条变成一个 RRULE 自动化跑起来。其它 Agent 平台同理，核心是「扫目录 → 去重 → 调 Skill → 归档」四步。
+
 ---
 
 ## 📸 截图
 
-> 主界面分为四个 Tab：录制 / 下载 / 任务 / 笔记 / 设置
+| 录制 | 下载 |
+|---|---|
+| ![录制 Tab](docs/screenshots/record.png) | ![下载 Tab](docs/screenshots/download.png) |
 
-（截图待补）
+**依赖自检面板**：设置 → 依赖 一键检查 ffmpeg / Python / yt-dlp / sherpa-onnx / ASR 模型 是否齐全，缺什么点一键安装
+
+![依赖自检](docs/screenshots/dependencies.png)
 
 ---
 
