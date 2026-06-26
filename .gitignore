@@ -1,0 +1,26 @@
+# SwiftPM
+.build/
+Package.resolved
+DerivedData/
+*.xcodeproj/
+*.xcworkspace/
+
+# Build artifacts
+*.app/
+
+# Embedded binaries（首次构建时由 scripts/fetch_vendor.sh 拉取）
+vendor/ffmpeg
+vendor/yt-dlp
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs / runtime
+*.log
+logs/
