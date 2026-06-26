@@ -179,17 +179,6 @@ bash scripts/make_app.sh
 
 ---
 
-## 🎯 与姊妹项目的关系
-
-| 项目 | 定位 | 关系 |
-|---|---|---|
-| [MediaDownloader](https://github.com/fanbaocheng/media-downloader) | yt-dlp 图形封装 | **AudioNote 的下载引擎照搬这里的稳定实现**（站点 headers / 错误归一 / Cookie 复用） |
-| AudioTranscriber（未开源） | 本地 sherpa-onnx 转写工具 | **AudioNote 的转写引擎照搬这里的稳定实现**（滑窗 / SenseVoice 模型加载 / 分段策略） |
-
-AudioNote = MediaDownloader + AudioTranscriber + 系统录制 + 统一任务队列。
-
----
-
 ## 📜 License
 
 MIT © 2026 ryan
