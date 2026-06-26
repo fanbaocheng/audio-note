@@ -2,14 +2,14 @@
 
 > 一个 macOS 桌面应用，把「下载 → 录制 → 转写 → 笔记」做成一条流水线。
 >
-> Powered by SwiftUI · yt-dlp · ScreenCaptureKit · sherpa-onnx (SenseVoice) · ffmpeg
+> Powered by SwiftUI · yt-dlp · Core Audio (AUHAL + BlackHole loopback) · sherpa-onnx (SenseVoice) · ffmpeg
 
 ---
 
 ## ✨ 它能做什么
 
 - **🎬 从链接直接转写**：粘贴 B 站 / YouTube / 抖音 / 小红书 / 微博 URL → 自动下载音频 → 自动转写成 txt
-- **🎙️ 系统音频录制**：基于 ScreenCaptureKit 抓系统输出 + 麦克风混音，无需 BlackHole 之类的虚拟声卡
+- **🎙️ 系统音频录制**：通过 BlackHole 等虚拟声卡（loopback 设备）+ Core Audio AUHAL 抓系统输出，可同时混入麦克风；启动录制时自动把系统输出路由到「BlackHole + 耳机」多输出设备，不影响正常听音
 - **📝 离线本地转写**：sherpa-onnx + SenseVoice 模型，全程本地推理，不上传任何数据
 - **📂 本地文件导入**：mp3 / m4a / wav / mp4 拖进来即转写
 - **🔁 断点续转**：转写过程实时把已完成段 flush 到 sidecar，异常中断后可自动从中断处继续，不用每次从头来
@@ -43,7 +43,7 @@
 ┌─────────────────────────▼──────────────────────────────────┐
 │                       Engine 引擎层                        │
 │   DownloadEngine     ── yt-dlp 子进程 + 站点 headers      │
-│   AudioCaptureEngine ── ScreenCaptureKit + AVAudioEngine  │
+│   AudioCaptureEngine ── Core Audio AUHAL + BlackHole      │
 │   AudioProcessingEngine ── ffmpeg 转码 / 混音             │
 │   ASRService         ── transcribe.py + sherpa-onnx       │
 └─────────────────────────┬──────────────────────────────────┘
@@ -77,7 +77,7 @@ UniAudio/                          # 工程根（GitHub 仓库名 audio-note）
 │   │   └── DependencyManager.swift# Python venv / pip 包 / ffmpeg / 模型 检测与一键安装
 │   ├── Engine/                    # 业务引擎（每个引擎单文件，互不依赖）
 │   │   ├── DownloadEngine.swift   # yt-dlp 调度、进度流式解析、错误归一
-│   │   ├── AudioCaptureEngine.swift # ScreenCaptureKit 系统音频 + AVAudioEngine 麦克风
+│   │   ├── AudioCaptureEngine.swift # Core Audio AUHAL 绑 BlackHole loopback + 麦克风混音
 │   │   ├── AudioProcessingEngine.swift # ffmpeg 转码、混音、采样率归一
 │   │   ├── OutputDeviceRouter.swift # CoreAudio 输出路由
 │   │   └── ASRService.swift       # 调用 transcribe.py、sidecar 断点续转
@@ -112,7 +112,8 @@ UniAudio/                          # 工程根（GitHub 仓库名 audio-note）
 
 | 项 | 版本 | 用途 |
 |---|---|---|
-| macOS | 13.0+ | ScreenCaptureKit / SwiftUI |
+| macOS | 13.0+ | SwiftUI / Core Audio |
+| BlackHole (2ch) | 0.5+ | 系统音频 loopback（录制系统输出必装；不录制系统音频可不装） |
 | Xcode CLT | 15+ | Swift 5.9 toolchain |
 | Python | 3.10–3.12 | sherpa-onnx 推理 |
 | ffmpeg | 6.0+ | 音视频转码（首次构建自动下载） |
@@ -126,6 +127,10 @@ cd audio-note
 
 # 拉 ffmpeg 二进制（48MB，arm64 静态构建）
 bash scripts/fetch_vendor.sh
+
+# 如需录制系统音频，安装 BlackHole（虚拟声卡，做 loopback 用）
+brew install blackhole-2ch
+# 装完后在「音频 MIDI 设置」里创建一个「多输出设备」，勾选 BlackHole 2ch + 你的耳机/扬声器
 
 # 准备 Python venv + sherpa-onnx + yt-dlp
 python3 -m venv .venv

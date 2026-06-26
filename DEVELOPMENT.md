@@ -3,10 +3,11 @@
 ## 环境准备
 
 ### 1. 系统要求
-- macOS 13.0+（Ventura 及以上，ScreenCaptureKit 要求）
+- macOS 13.0+（Ventura 及以上，SwiftUI / Core Audio）
 - Apple Silicon 推荐（M1/M2/M3），Intel Mac 需自行替换 ffmpeg 为 x86_64 版本
 - Xcode Command Line Tools 15+
 - Python 3.10–3.12
+- **BlackHole 2ch**（系统音频录制必装；只用「下载 + 转写」可不装）：`brew install blackhole-2ch`，并在「音频 MIDI 设置」里创建一个多输出设备同时勾选 BlackHole 和你的耳机
 
 ### 2. 一次性环境搭建
 

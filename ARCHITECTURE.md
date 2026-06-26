@@ -175,29 +175,47 @@ try? FileManager.default.removeItem(at: partialURL)   // 清理 sidecar
 
 ## 4. 录制实现
 
-### 4.1 ScreenCaptureKit + AVAudioEngine 混音
+### 4.1 Core Audio AUHAL + BlackHole loopback 混音
+
+实现完整迁移自 AudioTranscriber.AudioRecorder（已稳定跑很长时间），底层是原生 Core Audio（AUHAL，`kAudioUnitSubType_HALOutput`），**不是** ScreenCaptureKit/AVAudioEngine。
 
 ```
-┌──────────────────┐         ┌──────────────────┐
-│ ScreenCaptureKit │         │  AVAudioEngine   │
-│  (系统输出音频)  │         │   (麦克风输入)   │
-└────────┬─────────┘         └─────────┬────────┘
-         │                             │
-         │  AVAudioPCMBuffer           │  AVAudioPCMBuffer
-         │  48kHz stereo               │  设备原生采样率
-         │                             │
-         └──────────┬──────────────────┘
-                    ▼
-         ┌──────────────────────┐
-         │  AudioMixer (sample- │
-         │  rate convert + sum) │
-         └──────────┬───────────┘
-                    ▼
-         ┌──────────────────────┐
-         │  AVAudioFile 写盘    │
-         │  16kHz mono PCM wav  │
-         └──────────────────────┘
+                  ┌─────────────────────────┐
+                  │   系统应用音频输出       │
+                  │  (Safari / 音乐 / etc.) │
+                  └────────────┬────────────┘
+                               │ 通过「多输出设备」分流
+                  ┌────────────┴────────────┐
+                  ▼                         ▼
+       ┌──────────────────┐       ┌──────────────────┐
+       │  BlackHole 2ch   │       │  耳机 / 扬声器   │
+       │  (虚拟 loopback) │       │  (用户能听到)    │
+       └────────┬─────────┘       └──────────────────┘
+                │
+                │ AUHAL Input (kAudioOutputUnitProperty_EnableIO)
+                ▼
+       ┌──────────────────┐         ┌──────────────────┐
+       │ AUHAL 绑定 lo-   │         │  AUHAL 绑定麦克风 │
+       │ opback 设备读取  │         │ (可选, 用户开关) │
+       └────────┬─────────┘         └─────────┬────────┘
+                │ AudioBufferList            │ AudioBufferList
+                └──────────┬─────────────────┘
+                           ▼
+                ┌──────────────────────┐
+                │  AudioMixer (sample- │
+                │  rate convert + sum) │
+                └──────────┬───────────┘
+                           ▼
+                ┌──────────────────────┐
+                │  WAV 写盘 (16k mono  │
+                │  PCM s16le)          │
+                └──────────────────────┘
 ```
+
+**关键点**：
+- 依赖 **BlackHole**（或 Soundflower / Loopback / 任意带 loopback 能力的虚拟声卡 / 聚合设备）。`AudioCaptureEngine.isLoopbackDevice` 按名字匹配：`blackhole / loopback / soundflower / virtual / aggregate / multi-output`。
+- 启动录制时 `attemptRouteSystemOutput` 自动把系统输出切到一个「同时包含 BlackHole 子设备和你的耳机」的多输出设备，这样耳机能听到声音 + BlackHole 拿到信号；录制结束后路由还原。
+- macOS 14.4+ 的 Core Audio Tap API（无需虚拟声卡）暂未迁移，后续可作为独立改造去掉 BlackHole 依赖。
 
 文件名固定 `MMDDHHMMSS.wav`，存到 `~/Library/Application Support/AudioNote/recordings/`（可在设置改）。
 

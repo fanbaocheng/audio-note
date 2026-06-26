@@ -16,6 +16,9 @@
 - `canPause` 扩展支持 `.recording`，`canRetry` 扩展支持 `.paused`
 - ASRService 启动转写时把 `Process` 引用注册到 `task.process`，scheduler.cancel/pause 真正能终止子进程
 
+### Docs
+- 修正 README / ARCHITECTURE / DEVELOPMENT 中录制底层的错误描述：实际是 Core Audio AUHAL + BlackHole loopback（完整迁移自 AudioTranscriber.AudioRecorder），不是 ScreenCaptureKit / AVAudioEngine；补充 BlackHole 安装步骤和多输出设备配置说明
+
 ### Fixed
 - retry 一次产生 3 个重复任务（task 被 insert 两次）→ 改原地复用
 - 第二次启动录音时实时转写预览空白 → startRecording 末尾重置 state.totalFrames 等
