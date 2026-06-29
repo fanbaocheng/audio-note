@@ -2,13 +2,14 @@
 
 本文档记录 AudioNote 的重要变更。版本号遵循 [Semantic Versioning](https://semver.org/)。
 
-## [Unreleased]
+## [0.1.1] - 2026-06-29
 
 ### Added
 - `scripts/make_app.sh` 一键打包脚本（支持 `release` / `debug` 配置 + `APP_OUT_DIR` 自定义输出目录）
 - `Resources/AppIcon.icns` 和 `Resources/Info.plist` 入库（打包流水线所需）
 
 ### Docs
+- README 重构为「玩法 + App 功能」两段式结构：第一部分讲 AudioNote × AI Agent 联动玩法（3 个场景 + 联动模式 + Skill 模板 + ASR 校验提示），第二部分讲 App 本身能力（截图 + 功能清单 + 文件命名 + 默认目录）；去掉与 ARCHITECTURE/DEVELOPMENT 重复的内容
 - 修正 README / DEVELOPMENT / ARCHITECTURE 中路径不一致的问题：
   - 录制默认目录 `~/Documents/AudioNote/Recordings/`（不是 Application Support）
   - 下载默认目录 `~/Documents/AudioNote/Downloads/`（不是 ~/Downloads/AudioNote）
