@@ -180,7 +180,7 @@ final class DependencyManager: ObservableObject {
                     results[i].status = .ok
                     results[i].detail = "已检测到"
                 } else {
-                    results[i].status = .warning("brew install --cask blackhole-2ch（装完需重启）")
+                    results[i].status = .warning("brew update && brew install --cask blackhole-2ch（找不到 cask 时改用 existential.audio/blackhole 官方 .pkg；装完必须重启）")
                 }
 
             case "disk":

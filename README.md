@@ -196,10 +196,15 @@ cd audio-note
 # 2. 拉 ffmpeg 二进制
 bash scripts/fetch_vendor.sh
 
-# 3. 如需录制系统音频，安装 BlackHole（虚拟声卡，注意是 --cask）
-brew install --cask blackhole-2ch
-# 装完后必须重启一次！然后在「音频 MIDI 设置」里创建一个「多输出设备」，
+# 3. 如需录制系统音频，安装 BlackHole（虚拟声卡）
+#    优先用 brew（注意必须带 --cask），若提示 "No Cask with this name exists"
+#    先 brew update 一次再试；还不行就用官方 .pkg 直装（见下方）
+brew update && brew install --cask blackhole-2ch
+# 装完后必须重启一次 macOS！然后在「音频 MIDI 设置」里创建「多输出设备」，
 # 勾选 BlackHole 2ch + 你的耳机/扬声器
+#
+# brew 走不通的兜底方案（官方 .pkg，无需 brew）：
+#   https://existential.audio/blackhole/  填邮箱后下载 BlackHole2ch.v0.7.0.pkg 双击安装
 
 # 4. 编译运行
 swift run -c release

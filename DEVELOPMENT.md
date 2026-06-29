@@ -7,7 +7,12 @@
 - Apple Silicon 推荐（M1/M2/M3），Intel Mac 需自行替换 ffmpeg 为 x86_64 版本
 - Xcode Command Line Tools 15+
 - Python 3.10–3.12
-- **BlackHole 2ch**（系统音频录制必装；只用「下载 + 转写」可不装）：`brew install --cask blackhole-2ch`（注意 `--cask` 不能省，BlackHole 是 pkg 安装器），装完**需要重启**一次才能生效；然后在「音频 MIDI 设置」里创建一个多输出设备同时勾选 BlackHole 和你的耳机
+- **BlackHole 2ch**（系统音频录制必装；只用「下载 + 转写」可不装）。三档安装方案，从上到下试：
+  1. **brew（首选）**：`brew update && brew install --cask blackhole-2ch`（`--cask` 不能省，BlackHole 是 pkg 安装器；先 `brew update` 是关键，老 brew 索引里可能没有这个 cask）
+  2. **遇到 "No Cask with this name exists"**：本地 cask 索引坏了 → `brew untap homebrew/cask 2>/dev/null; brew update --force; brew install --cask blackhole-2ch`
+  3. **brew 完全走不通的兜底**：直接到 [existential.audio/blackhole](https://existential.audio/blackhole/) 填邮箱拿官方 `.pkg` 安装器双击安装（这是 BlackHole 作者官方分发渠道，与 brew 装的是同一个 .pkg）
+
+  装完**必须重启 macOS** 一次（虚拟声卡 kext 才会加载），然后在「音频 MIDI 设置」里创建一个多输出设备同时勾选 BlackHole 和你的耳机/扬声器
 
 ### 2. 一次性环境搭建（推荐：用 App 内置依赖面板）
 
