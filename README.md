@@ -196,9 +196,10 @@ cd audio-note
 # 2. 拉 ffmpeg 二进制
 bash scripts/fetch_vendor.sh
 
-# 3. 如需录制系统音频，安装 BlackHole
-brew install blackhole-2ch
-# 装完后在「音频 MIDI 设置」里创建一个「多输出设备」，勾选 BlackHole 2ch + 你的耳机/扬声器
+# 3. 如需录制系统音频，安装 BlackHole（虚拟声卡，注意是 --cask）
+brew install --cask blackhole-2ch
+# 装完后必须重启一次！然后在「音频 MIDI 设置」里创建一个「多输出设备」，
+# 勾选 BlackHole 2ch + 你的耳机/扬声器
 
 # 4. 编译运行
 swift run -c release

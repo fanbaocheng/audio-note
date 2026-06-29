@@ -7,7 +7,7 @@
 - Apple Silicon 推荐（M1/M2/M3），Intel Mac 需自行替换 ffmpeg 为 x86_64 版本
 - Xcode Command Line Tools 15+
 - Python 3.10–3.12
-- **BlackHole 2ch**（系统音频录制必装；只用「下载 + 转写」可不装）：`brew install blackhole-2ch`，并在「音频 MIDI 设置」里创建一个多输出设备同时勾选 BlackHole 和你的耳机
+- **BlackHole 2ch**（系统音频录制必装；只用「下载 + 转写」可不装）：`brew install --cask blackhole-2ch`（注意 `--cask` 不能省，BlackHole 是 pkg 安装器），装完**需要重启**一次才能生效；然后在「音频 MIDI 设置」里创建一个多输出设备同时勾选 BlackHole 和你的耳机
 
 ### 2. 一次性环境搭建（推荐：用 App 内置依赖面板）
 

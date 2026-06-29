@@ -180,7 +180,7 @@ final class DependencyManager: ObservableObject {
                     results[i].status = .ok
                     results[i].detail = "已检测到"
                 } else {
-                    results[i].status = .warning("brew install blackhole-2ch")
+                    results[i].status = .warning("brew install --cask blackhole-2ch（装完需重启）")
                 }
 
             case "disk":
