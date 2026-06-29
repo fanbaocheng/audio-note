@@ -7,6 +7,7 @@ DerivedData/
 
 # Build artifacts
 *.app/
+build/
 
 # Embedded binaries（首次构建时由 scripts/fetch_vendor.sh 拉取）
 vendor/ffmpeg

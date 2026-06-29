@@ -5,6 +5,24 @@
 ## [Unreleased]
 
 ### Added
+- `scripts/make_app.sh` 一键打包脚本（支持 `release` / `debug` 配置 + `APP_OUT_DIR` 自定义输出目录）
+- `Resources/AppIcon.icns` 和 `Resources/Info.plist` 入库（打包流水线所需）
+
+### Docs
+- 修正 README / DEVELOPMENT / ARCHITECTURE 中路径不一致的问题：
+  - 录制默认目录 `~/Documents/AudioNote/Recordings/`（不是 Application Support）
+  - 下载默认目录 `~/Documents/AudioNote/Downloads/`（不是 ~/Downloads/AudioNote）
+  - 转写 `.txt` 与源音频同目录（不单独放 transcripts/）
+  - ASR 模型默认目录 `~/.cache/sherpa-onnx-models/`（不是 Application Support/models/）
+  - 模型文件名 `model.int8.onnx`（不是 model.onnx）
+- 推荐使用 App 内置「依赖一键安装」流程，手动安装作为高级用法保留
+- 移除 ARCHITECTURE §9 已知技术债中过时的「模型下载没有内置下载器」条目
+
+## [0.1.0] - 2026-06-29
+
+首个公开版本（GitHub: [fanbaocheng/audio-note](https://github.com/fanbaocheng/audio-note)）。
+
+### Added
 - 转写断点续转：sidecar `<base>.partial.tsv` 每段 flush + fsync，崩溃后自动续转，不再从头开始
 - 任务行所有操作按钮全部常驻可见（置顶 / 重试 / 暂停 / 继续 / 取消 / 移除），右键菜单作为冗余入口保留
 - 任务行显示双阶段进度：下载进度 + 耗时、转写进度 + 耗时、进行中追加预估剩余时间

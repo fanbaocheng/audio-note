@@ -9,32 +9,47 @@
 - Python 3.10–3.12
 - **BlackHole 2ch**（系统音频录制必装；只用「下载 + 转写」可不装）：`brew install blackhole-2ch`，并在「音频 MIDI 设置」里创建一个多输出设备同时勾选 BlackHole 和你的耳机
 
-### 2. 一次性环境搭建
+### 2. 一次性环境搭建（推荐：用 App 内置依赖面板）
 
 ```bash
 # 克隆代码
 git clone https://github.com/fanbaocheng/audio-note.git
 cd audio-note
 
-# 拉 ffmpeg 静态二进制（48MB，arm64）
+# 拉 ffmpeg 静态二进制（48MB，arm64，不入 git）
 bash scripts/fetch_vendor.sh
 
-# 创建 Python venv
-python3 -m venv .venv
-source .venv/bin/activate
+# 编译并启动
+swift run -c release
+```
 
-# 安装 Python 依赖
+App 启动后：**设置 → 依赖** → 点「一键安装」，会自动完成：
+
+- 创建 `~/Library/Application Support/AudioNote/python-venv/`（Python venv）
+- 安装 `sherpa-onnx` / `numpy` / `yt-dlp`
+- 下载 ASR 模型到 `~/.cache/sherpa-onnx-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/`（sherpa-onnx 内置下载器，约 240MB）
+
+### 手动安装依赖
+
+如果偏好手动安装（CI 环境、离线分发等），按下面顺序：
+
+```bash
+# Python venv（路径必须是这个，否则 BinaryResolver 找不到）
+python3 -m venv ~/Library/Application\ Support/AudioNote/python-venv
+source ~/Library/Application\ Support/AudioNote/python-venv/bin/activate
 pip install --upgrade pip
 pip install sherpa-onnx numpy yt-dlp
 
-# 下载 SenseVoice 模型（约 240MB，HuggingFace）
-mkdir -p ~/Library/Application\ Support/AudioNote/models/
-cd ~/Library/Application\ Support/AudioNote/models/
+# 模型（用 sherpa-onnx 自带下载器 或 git clone）
+mkdir -p ~/.cache/sherpa-onnx-models
+cd ~/.cache/sherpa-onnx-models
 git lfs install
 git clone https://huggingface.co/k2-fsa/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17
+# 确认结构：
+#   ~/.cache/sherpa-onnx-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/
+#     ├── model.int8.onnx     ← 实际加载的是 int8 量化版
+#     └── tokens.txt
 ```
-
-App 启动时若检测不到模型会弹设置面板提示。
 
 ---
 
@@ -57,7 +72,7 @@ swift build -c release
 # 产物：.build/release/AudioNote
 ```
 
-构建完后可以拷到 .app bundle 里覆盖：
+构建完后可以拷到现有 .app bundle 里热替换（不重打包）：
 ```bash
 cp .build/release/AudioNote ~/Desktop/AudioNote.app/Contents/MacOS/AudioNote
 codesign --force --deep --sign - ~/Desktop/AudioNote.app
@@ -67,16 +82,19 @@ pkill -x AudioNote && open ~/Desktop/AudioNote.app
 ### 打包完整 .app
 
 ```bash
-bash scripts/make_app.sh
-# 产出 ./AudioNote.app
+bash scripts/make_app.sh                          # release，输出 build/AudioNote.app
+bash scripts/make_app.sh debug                    # debug 配置
+APP_OUT_DIR=~/Desktop bash scripts/make_app.sh    # 自定义输出目录
 ```
 
 `make_app.sh` 做了什么：
-1. `swift build -c release` 编译 binary
-2. 创建 `AudioNote.app/Contents/{MacOS,Resources}/` 骨架
-3. 写入 `Info.plist`
-4. 拷贝 `vendor/ffmpeg` 和 `scripts/transcribe.py` 到 Resources
-5. ad-hoc 签名（`codesign --force --deep --sign -`）
+1. 前置检查 `Resources/{Info.plist,AppIcon.icns}` 和 `vendor/ffmpeg` 在不在
+2. `swift build -c <CONFIG>` 编译 binary
+3. 创建 `AudioNote.app/Contents/{MacOS,Resources/scripts,Resources/vendor}/` 骨架
+4. 拷 binary 到 MacOS/
+5. 拷 `Resources/Info.plist`、`Resources/AppIcon.icns`、`scripts/transcribe.py`、`vendor/ffmpeg` 到对应位置
+6. ad-hoc 签名（`codesign --force --deep --sign -`）
+7. 报告产物大小和路径
 
 ---
 
@@ -129,10 +147,12 @@ rm ~/Library/Application\ Support/AudioNote/tasks.json
 ```
 
 ### sidecar 断点文件
+sidecar 文件与源音频同目录。下载来源在 `~/Documents/AudioNote/Downloads/`，录制来源在 `~/Documents/AudioNote/Recordings/`：
+
 ```bash
 # 转写进行中能看到
-ls ~/Downloads/AudioNote/*.partial.tsv
-cat ~/Downloads/AudioNote/0626142158.partial.tsv
+ls ~/Documents/AudioNote/Downloads/*.partial.tsv
+cat ~/Documents/AudioNote/Downloads/0626142158.partial.tsv
 # 每行 "index<TAB>text"
 ```
 
@@ -140,12 +160,14 @@ cat ~/Downloads/AudioNote/0626142158.partial.tsv
 
 ## 常见问题
 
-### Q1：模型加载失败 `No such file: model.onnx`
-检查模型目录：
+### Q1：模型加载失败 `No such file: model.int8.onnx`
+检查模型目录（**默认在 `~/.cache/sherpa-onnx-models/`，不是 Application Support**）：
 ```bash
-ls ~/Library/Application\ Support/AudioNote/models/sense-voice-zh-en-ja-ko-yue-2024-07-17/
+ls ~/.cache/sherpa-onnx-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/
 # 应该有 model.int8.onnx 和 tokens.txt
 ```
+
+如果目录不存在或文件缺失，打开 App → 设置 → 依赖 → 一键安装让 sherpa-onnx 内置下载器重新拉。
 
 ### Q2：ffmpeg not found
 ```bash

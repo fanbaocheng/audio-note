@@ -217,7 +217,7 @@ try? FileManager.default.removeItem(at: partialURL)   // 清理 sidecar
 - 启动录制时 `attemptRouteSystemOutput` 自动把系统输出切到一个「同时包含 BlackHole 子设备和你的耳机」的多输出设备，这样耳机能听到声音 + BlackHole 拿到信号；录制结束后路由还原。
 - macOS 14.4+ 的 Core Audio Tap API（无需虚拟声卡）暂未迁移，后续可作为独立改造去掉 BlackHole 依赖。
 
-文件名固定 `MMDDHHMMSS.wav`，存到 `~/Library/Application Support/AudioNote/recordings/`（可在设置改）。
+文件名固定 `MMDDHHMMSS.wav`，存到 `~/Documents/AudioNote/Recordings/`（可在设置改）。
 
 ### 4.2 实时转写预览
 录制中每隔 N 秒（默认 5s）取最近 K 秒滑窗喂给 transcribe.py 的 `--start-frame/--end-frame` 模式，结果实时显示在录制 Tab 的预览面板。
@@ -291,10 +291,12 @@ enum BinaryResolver {
 |---|---|---|
 | 任务快照 | `~/Library/Application Support/AudioNote/tasks.json` | JSON encoded `[TaskSnapshot]` |
 | 转写 sidecar | 与输出 txt 同目录 `<base>.partial.tsv` | TSV `index\ttext\n`，转写完成后自动删 |
-| 设置 | `UserDefaults` | downloadDir / recordingDir / maxConcurrent / cookieSource ... |
+| 设置 | `UserDefaults` (`AudioNote.downloadsDirectoryPath` / `AudioNote.recordingsDirectoryPath` / `maxConcurrent` / `cookieSource` ...) | — |
 | 日志 | `~/Library/Logs/AudioNote/AudioNote-YYYY-MM-DD.log` | 行式 |
-| 录制音频 | `~/Library/Application Support/AudioNote/recordings/` | wav |
-| 下载音频 | `~/Downloads/AudioNote/` | mp3 |
+| Python venv | `~/Library/Application Support/AudioNote/python-venv/` | virtualenv |
+| ASR 模型 | `~/.cache/sherpa-onnx-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/` | onnx + tokens |
+| 录制音频 | `~/Documents/AudioNote/Recordings/` | wav |
+| 下载音频 | `~/Documents/AudioNote/Downloads/` | mp3 |
 | 笔记 txt | 与音频同目录 | utf-8 文本 |
 
 ---
@@ -336,7 +338,6 @@ enum BinaryResolver {
 
 - [ ] `TaskSnapshot` 持久化时未编码新增的 `downloadStartedAt/transcribeStartedAt` 字段，重启后这些时间会丢
 - [ ] `runWindowTranscription`（录制实时预览滑窗）没接 sidecar，断点续转只对离线转写生效
-- [ ] 模型下载没有内置下载器，需要用户手动 git clone hf 仓库
 - [ ] 没有自动更新机制（Sparkle 等）
 - [ ] ffmpeg 仅 arm64，Intel Mac 不可用
 - [ ] 没有 i18n，全中文硬编码
