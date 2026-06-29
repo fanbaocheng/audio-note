@@ -16,7 +16,7 @@
 git clone https://github.com/fanbaocheng/audio-note.git
 cd audio-note
 
-# 拉 ffmpeg 静态二进制（48MB，arm64，不入 git）
+# 拉 ffmpeg 静态二进制（arm64，~22MB，来源 osxexperts.net，不入 git）
 bash scripts/fetch_vendor.sh
 
 # 编译并启动

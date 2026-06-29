@@ -178,7 +178,7 @@ AudioNote/                         # 工程根（GitHub 仓库名 audio-note）
 ├── Tests/                         # 单测（最小骨架）
 ├── scripts/
 │   ├── transcribe.py              # sherpa-onnx 推理脚本（支持 --partial-file 增量 flush）
-│   ├── fetch_vendor.sh            # 拉 ffmpeg 静态二进制（48MB，不入 git）
+│   ├── fetch_vendor.sh            # 拉 ffmpeg 静态二进制（arm64，~22MB，不入 git）
 │   └── make_app.sh                # 一键打包 .app
 ├── Resources/                     # AppIcon.icns / Info.plist（打包用）
 └── vendor/                        # 外部二进制本地缓存（git 忽略，运行 fetch_vendor.sh 获取）
