@@ -45,9 +45,6 @@ struct RecordView: View {
                 .padding(.bottom, DS.Spacing.md)
         }
         .background(DS.Surface.windowBg)
-        .sheet(isPresented: $showDevicePicker) {
-            devicePickerSheet
-        }
         .onAppear { recorder.refreshDevices() }
     }
 
@@ -230,6 +227,9 @@ struct RecordView: View {
         }
         .buttonStyle(.plain)
         .help("点击切换音频源设备")
+        .popover(isPresented: $showDevicePicker, arrowEdge: .bottom) {
+            devicePickerPopover
+        }
     }
 
     private var deviceIconName: String {
@@ -352,25 +352,27 @@ struct RecordView: View {
         .frame(minHeight: 160)
     }
 
-    // MARK: - 设备选择
+    // MARK: - 设备选择（popover，与模式 pill 交互一致）
 
-    private var devicePickerSheet: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // 顶部标题栏
+    private var devicePickerPopover: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // 顶部标题栏：标题 + 刷新按钮
             HStack {
-                Text("选择音频源")
-                    .font(.headline)
+                Text("音频源")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
                 Spacer()
                 Button {
                     recorder.refreshDevices()
                 } label: {
                     Image(systemName: "arrow.clockwise")
-                        .font(.callout)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.borderless)
                 .help("刷新设备列表")
             }
-            .padding(.bottom, 2)
+            .padding(.horizontal, 2)
 
             // 系统音频区
             if recorder.recordingMode == .systemAudio || recorder.recordingMode == .mix {
@@ -399,18 +401,9 @@ struct RecordView: View {
                     }
                 )
             }
-
-            // 底部关闭按钮
-            HStack {
-                Spacer()
-                Button("完成") { showDevicePicker = false }
-                    .keyboardShortcut(.defaultAction)
-                    .controlSize(.regular)
-            }
-            .padding(.top, 2)
         }
-        .padding(14)
-        .frame(width: 360)
+        .padding(10)
+        .frame(width: 300)
         .fixedSize(horizontal: false, vertical: true)
     }
 
