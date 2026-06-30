@@ -2,6 +2,54 @@
 
 本文档记录 AudioNote 的重要变更。版本号遵循 [Semantic Versioning](https://semver.org/)。
 
+## [0.3.0] - 2026-06-30
+
+### Added — `audio-note` CLI
+
+新增完整的命令行工具 `/usr/local/bin/audio-note`，与 GUI App **共享同一份数据 / 配置 / 任务库**，方便集成到 AI Agent / 脚本 / 自动化工作流。
+
+**子命令清单（14 个）**：
+
+- `device list [--kind system|mic|all]`：列出系统音频 / 麦克风设备（`--type` 为兼容别名）
+- `device refresh`：刷新可用设备
+- `device default get`：查看默认设备
+- `device default set --kind <kind> --device <id|uid|name>`：持久化默认设备（CLI/GUI 共享）
+- `record [--mode] [--duration] [--device] [--device-mic] [--silence-timeout-min] [--auto-enqueue/--no-auto-enqueue] [--force-takeover]`：录制；支持 SIGINT/SIGTERM 优雅停止；静音自动停止逻辑沿用 GUI
+- `transcribe <input>`：转写本地音频/视频文件；**自动识别 URL**（http/https/B 站/YouTube）走下载+转写链路
+- `download <url> [--mode audio|video] [--output] [--cookie]`：下载远程音视频
+- `library list`：列出全部任务（已持久化 + 已扫描的孤立文件）
+- `library show <id>`：查看任务详情
+- `library export <id> [--kind audio|transcript] [--to <path>]`：导出（`--to` 是目录则自动按源文件名 append）
+- `library delete <id> [--with-files]`：删除任务（可连带音频/转写文件）
+- `settings list / get / set / reset [--all]`：读写应用配置（与 GUI 共享 UserDefaults）
+
+**全局机制**：
+
+- **互斥锁** (`SingleInstanceLock`)：基于 `flock(LOCK_EX|LOCK_NB) + PID 心跳`；GUI / CLI 同时只允许一个实例
+- **`--force-takeover`**：占用时 SIGTERM 通知 GUI 优雅退出（5s deadline + kill 0 探活），然后接管
+- **`--json`**：stdout 100% JSON Lines（事件协议 `{type: event/progress/done/error/result/info/row, ...}`），日志一律走 stderr
+- **`--quiet` / `--verbose`**：输出密度控制
+- **BSD sysexits 退出码**：`0` 成功 / `64` USAGE / `66` NOINPUT/NOT_FOUND / `70` SOFTWARE / `74` IOERR / `75` TEMPFAIL (互斥锁占用)
+
+### Changed
+
+- **Package.swift 拆 multi-target**：原 `Sources/{App,Engine,UI,...}/` 重构为：
+  - `Sources/AudioNoteCore/`（library，业务层 100% 复用）
+  - `Sources/AudioNoteApp/`（GUI executable）
+  - `Sources/AudioNoteCLI/`（CLI executable，产物名 `audio-note`）
+- **GUI/CLI 配置真正共享**：所有 `UserDefaults.standard` 替换为 `AppDefaults.shared`（suite `com.ryanfan.audionote`）；之前 GUI 设置 `recording.dir` 后 CLI 录音不去那里录的 bug 修复
+- **默认设备持久化**：`AudioCaptureEngine.selectedSystemDevice` / `selectedMicDevice` 现在写入 UserDefaults UID，refresh 时按 UID 恢复，GUI/CLI 切换不会丢失选择
+- **GUI 接入互斥锁**：启动时 `SingleInstanceLock.acquire(mode: .gui)`，冲突弹 NSAlert；安装 SIGTERM 处理器以响应 `--force-takeover`
+- **TaskScheduler 持久化修复**：`loadPersisted()` 现在复用 snapshot 的 id/createdAt/downloadMode，避免每次启动后任务 ID 漂移（之前 `library show` 找不到任务的 root cause）
+
+### Installation
+
+```bash
+swift build -c release
+sudo cp .build/arm64-apple-macosx/release/audio-note /usr/local/bin/
+# 或：bash scripts/make_app.sh release  # 同时构建 GUI .app
+```
+
 ## [0.2.0] - 2026-06-30
 
 ### Added
