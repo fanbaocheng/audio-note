@@ -6,6 +6,14 @@
 #   ./scripts/make_app.sh                # 默认 release，输出到 build/AudioNote.app
 #   ./scripts/make_app.sh debug          # debug 配置（更快但更大）
 #   APP_OUT_DIR=~/Desktop ./scripts/make_app.sh   # 自定义输出目录
+#   NO_BUMP=1 ./scripts/make_app.sh      # 试打包，不自动递增 VERSION
+#
+# 版本号：
+#   ./VERSION 保存当前 marketing version（X.Y.Z）
+#   打包时：
+#     CFBundleShortVersionString = VERSION 内容（例 1.0.1）
+#     CFBundleVersion            = ${VERSION}_YYYY/MM/DD_HH:MM:SS
+#   打包成功后自动把 VERSION 的 patch +1（下次再打就是 1.0.2）
 #
 # 产物结构：
 #   AudioNote.app/
@@ -88,6 +96,25 @@ echo "📦 拷贝 Info.plist / AppIcon.icns ..."
 cp "Resources/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
 cp "Resources/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
 
+# ---- 4.1 注入版本号 ----
+# 规则：
+#   VERSION 文件保存当前 marketing version（例如 1.0.1），打包时：
+#     - CFBundleShortVersionString = $CURRENT
+#     - CFBundleVersion            = ${CURRENT}_YYYY/MM/DD_HH:MM:SS
+#   打包成功后自动把 VERSION patch +1（下次打包 1.0.2），便于"每次打包都递增"。
+#   如果只想试打包不递增版本号，传环境变量 NO_BUMP=1。
+VERSION_FILE="$REPO_ROOT/VERSION"
+if [ ! -f "$VERSION_FILE" ]; then
+    echo "1.0.1" > "$VERSION_FILE"
+fi
+CURRENT_VERSION="$(tr -d '[:space:]' < "$VERSION_FILE")"
+BUILD_STAMP="$(date '+%Y/%m/%d_%H:%M:%S')"
+BUILD_VERSION="${CURRENT_VERSION}_${BUILD_STAMP}"
+
+printf '[version] CFBundleShortVersionString=%s  CFBundleVersion=%s\n' "$CURRENT_VERSION" "$BUILD_VERSION"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $CURRENT_VERSION" "$APP_BUNDLE/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_VERSION" "$APP_BUNDLE/Contents/Info.plist"
+
 echo "📦 拷贝 scripts/transcribe.py ..."
 cp "scripts/transcribe.py" "$APP_BUNDLE/Contents/Resources/scripts/transcribe.py"
 
@@ -99,12 +126,31 @@ chmod +x "$APP_BUNDLE/Contents/Resources/vendor/ffmpeg"
 echo "🔏 代码签名（ad-hoc）..."
 codesign --force --deep --sign - "$APP_BUNDLE" 2>&1 | grep -v "replacing existing signature" || true
 
-# ---- 6. 完成 ----
+# ---- 6. 打包成功后递增 VERSION 的 patch 号 ----
+# 规则：仅在 marketing version 形如 X.Y.Z 时自动 +1 patch；NO_BUMP=1 跳过
+if [ "${NO_BUMP:-0}" != "1" ]; then
+    NEXT_VERSION="$(printf '%s' "$CURRENT_VERSION" | awk -F. '{
+        if (NF==3 && $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/) {
+            printf "%s.%s.%d", $1, $2, $3+1
+        }
+    }')"
+    if [ -n "$NEXT_VERSION" ]; then
+        echo "$NEXT_VERSION" > "$VERSION_FILE"
+        printf '[bump] VERSION 已递增：%s -> %s（下次打包用）\n' "$CURRENT_VERSION" "$NEXT_VERSION"
+    else
+        printf '[warn] VERSION 文件内容（%s）不是 X.Y.Z 格式，跳过自动递增\n' "$CURRENT_VERSION" >&2
+    fi
+else
+    echo "ℹ️  NO_BUMP=1，跳过 VERSION 递增"
+fi
+
+# ---- 7. 完成 ----
 SIZE=$(du -sh "$APP_BUNDLE" | awk '{print $1}')
 echo ""
 echo "✅ 打包完成"
 echo "   路径: $APP_BUNDLE"
 echo "   大小: $SIZE"
+echo "   版本: $CURRENT_VERSION  (build: $BUILD_VERSION)"
 echo ""
 echo "   用法："
 echo "     open '$APP_BUNDLE'"
