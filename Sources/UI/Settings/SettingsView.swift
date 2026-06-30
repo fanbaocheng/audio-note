@@ -85,18 +85,56 @@ struct SettingsView: View {
 
     private var recordingTab: some View {
         Form {
+            // 1. 录制模式
             Section {
-                Picker("音频源", selection: Binding<AudioDeviceID>(
-                    get: { recorder.selectedDevice?.id ?? 0 },
-                    set: { newID in
-                        recorder.selectedDevice = recorder.availableDevices.first { $0.id == newID }
+                Picker("录制模式", selection: $recorder.recordingMode) {
+                    ForEach(RecordingMode.allCases, id: \.self) { mode in
+                        Label(mode.displayName, systemImage: mode.iconName).tag(mode)
                     }
-                )) {
-                    if recorder.availableDevices.isEmpty {
-                        Text("未检测到环回设备").tag(AudioDeviceID(0))
-                    } else {
-                        ForEach(recorder.availableDevices) { d in
-                            Text(d.displayName).tag(d.id)
+                }
+                .pickerStyle(.inline)
+            } header: {
+                Text("录制模式")
+            } footer: {
+                Text(modeFooterText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            // 2. 设备选择
+            Section {
+                // 系统音频设备（systemAudio / mix 显示）
+                if recorder.recordingMode == .systemAudio || recorder.recordingMode == .mix {
+                    Picker("系统音频", selection: Binding<AudioDeviceID>(
+                        get: { recorder.selectedSystemDevice?.id ?? 0 },
+                        set: { newID in
+                            recorder.selectedSystemDevice = recorder.availableSystemDevices.first { $0.id == newID }
+                        }
+                    )) {
+                        if recorder.availableSystemDevices.isEmpty {
+                            Text("未检测到环回设备").tag(AudioDeviceID(0))
+                        } else {
+                            ForEach(recorder.availableSystemDevices) { d in
+                                Text(d.displayName).tag(d.id)
+                            }
+                        }
+                    }
+                }
+
+                // 麦克风设备（microphone / mix 显示）
+                if recorder.recordingMode == .microphone || recorder.recordingMode == .mix {
+                    Picker("麦克风", selection: Binding<AudioDeviceID>(
+                        get: { recorder.selectedMicDevice?.id ?? 0 },
+                        set: { newID in
+                            recorder.selectedMicDevice = recorder.availableMicDevices.first { $0.id == newID }
+                        }
+                    )) {
+                        if recorder.availableMicDevices.isEmpty {
+                            Text("未检测到麦克风").tag(AudioDeviceID(0))
+                        } else {
+                            ForEach(recorder.availableMicDevices) { d in
+                                Text(d.displayName).tag(d.id)
+                            }
                         }
                     }
                 }
@@ -108,15 +146,47 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.borderless)
             } header: {
-                Text("音频源")
+                Text("设备")
             } footer: {
-                Text(recorder.availableDevices.isEmpty
-                     ? "需要安装 BlackHole 才能录制系统音。"
-                     : "选择用于录制系统输出的环回设备。")
+                Text(deviceFooterText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
+            // 3. 混录参数（仅 mix 模式）
+            if recorder.recordingMode == .mix {
+                Section {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text("系统音频音量")
+                            Spacer()
+                            Text("\(Int(recorder.mixSystemGain * 100))%")
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                        }
+                        Slider(value: $recorder.mixSystemGain, in: 0...2)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text("麦克风音量")
+                            Spacer()
+                            Text("\(Int(recorder.mixMicGain * 100))%")
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                        }
+                        Slider(value: $recorder.mixMicGain, in: 0...2)
+                    }
+                    Toggle("保留原始两路音频", isOn: $recorder.keepOriginalTracks)
+                } header: {
+                    Text("混录参数")
+                } footer: {
+                    Text("两路音频独立采集，停止录制后用 ffmpeg amix 合并。录制过程中的实时转写预览仅基于系统音频，最终任务队列会重转合并后的完整音频。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            // 4. 智能停止
             Section {
                 Toggle("静音超时自动停止", isOn: $recorder.silenceAutoStopEnabled)
                 Stepper(value: Binding(
@@ -141,6 +211,29 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    private var modeFooterText: String {
+        switch recorder.recordingMode {
+        case .systemAudio: return "录制电脑播放的声音（需要 BlackHole 等环回设备）。"
+        case .microphone:  return "录制麦克风采集的真实声音。"
+        case .mix:         return "同时采集系统音频和麦克风，录制结束后自动合并为一个文件。"
+        }
+    }
+
+    private var deviceFooterText: String {
+        switch recorder.recordingMode {
+        case .systemAudio:
+            return recorder.availableSystemDevices.isEmpty
+                ? "未检测到环回设备。需要安装 BlackHole 才能录制系统音。"
+                : "选择用于录制系统输出的环回设备。"
+        case .microphone:
+            return recorder.availableMicDevices.isEmpty
+                ? "未检测到麦克风。请检查系统设置 → 隐私与安全性 → 麦克风权限。"
+                : "选择用于录制的麦克风设备。"
+        case .mix:
+            return "混录模式需要同时指定一个环回设备和一个麦克风。"
+        }
     }
 
     // MARK: - 存储

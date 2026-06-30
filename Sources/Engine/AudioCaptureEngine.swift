@@ -2,14 +2,39 @@ import Foundation
 import AVFoundation
 import CoreAudio
 
+// MARK: - 录制模式
+
+/// 三种录制模式
+enum RecordingMode: String, CaseIterable, Codable {
+    case systemAudio   // A. 只录系统音频（声卡/环回设备）
+    case microphone    // B. 只录麦克风
+    case mix           // C. 系统音频 + 麦克风（双路并行 + ffmpeg amix 合并）
+
+    var displayName: String {
+        switch self {
+        case .systemAudio: return "系统音频"
+        case .microphone:  return "麦克风"
+        case .mix:         return "系统音频 + 麦克风"
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .systemAudio: return "speaker.wave.2.fill"
+        case .microphone:  return "mic.fill"
+        case .mix:         return "person.wave.2.fill"
+        }
+    }
+}
+
 // MARK: - C 回调可访问的非隔离状态
 
-/// AudioUnit 渲染回调需要的非隔离数据（不归 MainActor 管）
+/// 单路 AUHAL 渲染回调需要的非隔离数据
 private final class CaptureState {
     var audioUnit: AudioUnit?
     var wavFile: UnsafeMutablePointer<FILE>?
 
-    /// 预分配的渲染 buffer（避免 AudioUnitRender 分配失败）
+    /// 预分配的渲染 buffer
     var renderBuffer: UnsafeMutablePointer<Float>?
     var renderBufferCapacity: Int = 0
 
@@ -17,16 +42,15 @@ private final class CaptureState {
     var rmsSum: Float = 0
     var rmsCount: Int = 0
 
-    /// 累计采到的 frame 数（诊断用）
+    /// 累计采到的 frame 数（诊断 + 实时转写游标）
     var totalFrames: UInt64 = 0
-    /// 渲染回调被调用次数
     var callbackCount: UInt64 = 0
-    /// 最近一次 render error
     var lastRenderError: OSStatus = 0
-    /// 实际采集采样率
     var captureSampleRate: Double = 16000
-    /// fflush 计数器
     var flushCounter: UInt64 = 0
+
+    /// 用于区分双路写入（仅日志/诊断使用）
+    var tag: String = "main"
 
     func addRMS(_ rms: Float) {
         rmsSum += rms
@@ -58,91 +82,134 @@ private final class CaptureState {
 
 // MARK: - AudioCaptureEngine
 //
-// 完整迁移自 AudioTranscriber.AudioRecorder（AUHAL 系统音频采集引擎）。
-// 适配 AudioNote：
-//   - 类名固定为 `AudioCaptureEngine` 以保持现有 UI/SettingsView/RecordView 兼容
-//   - 提供 `static let shared` 单例（UI 依赖）
-//   - 路径默认 `~/Documents/AudioNote/Recordings`
-//   - UserDefaults Key 改为 `AudioNote.recordingsDirectoryPath`
-//   - Notification 名 `audioNoteMultiOutputMissing`
-//   - 日志改走 `Logger.recording`（替代 `print("[AudioRecorder]...")`)
-//   - 保留 `formattedElapsed()` 便捷方法供 RecordView
+// 升级版：支持三种录制模式
+//   - A. systemAudio：单路 AUHAL 采集环回设备（原有逻辑）
+//   - B. microphone：单路 AUHAL 采集真实麦克风
+//   - C. mix：双路并行采集，停止后 ffmpeg amix 合并
 
-/// 系统音频采集引擎：使用原生 AudioUnit (AUHAL) 直接绑定 loopback 设备。
+/// 录制引擎：支持系统音频 / 麦克风 / 混录三种模式
 @MainActor
 final class AudioCaptureEngine: ObservableObject {
     static let shared = AudioCaptureEngine()
+
+    // MARK: - 公共状态
 
     @Published var isRecording = false
     @Published var isPaused = false
     @Published var elapsedTime: TimeInterval = 0
     @Published var rmsLevel: Float = 0
     @Published var rmsHistory: [Float] = []
-    @Published var availableDevices: [LoopbackDevice] = []
-    @Published var selectedDevice: LoopbackDevice?
+
+    /// 系统音频候选设备（环回 / 虚拟 / 聚合）
+    @Published var availableSystemDevices: [AudioInputDevice] = []
+    /// 麦克风候选设备（真实输入设备，排除环回）
+    @Published var availableMicDevices: [AudioInputDevice] = []
+    /// 兼容旧 UI：与 availableSystemDevices 一致
+    var availableDevices: [AudioInputDevice] { availableSystemDevices }
+
+    /// 当前选择的系统音频设备
+    @Published var selectedSystemDevice: AudioInputDevice?
+    /// 当前选择的麦克风设备
+    @Published var selectedMicDevice: AudioInputDevice?
+    /// 兼容旧 UI：等价于 selectedSystemDevice
+    var selectedDevice: AudioInputDevice? {
+        get { selectedSystemDevice }
+        set { selectedSystemDevice = newValue }
+    }
+
     @Published var noDevicesFound = false
 
-    /// 录制时是否自动切换系统输出到 Multi-Output Device（默认开）
+    /// 当前录制模式
+    @Published var recordingMode: RecordingMode = {
+        if let raw = UserDefaults.standard.string(forKey: "AudioNote.recordingMode"),
+           let mode = RecordingMode(rawValue: raw) {
+            return mode
+        }
+        return .systemAudio
+    }() {
+        didSet { UserDefaults.standard.set(recordingMode.rawValue, forKey: "AudioNote.recordingMode") }
+    }
+
+    /// 混录时系统音频增益（0.0 ~ 2.0，UI 0%~200%）
+    @Published var mixSystemGain: Float = Float(UserDefaults.standard.object(forKey: "AudioNote.mixSystemGain") as? Double ?? 1.0) {
+        didSet { UserDefaults.standard.set(Double(mixSystemGain), forKey: "AudioNote.mixSystemGain") }
+    }
+    /// 混录时麦克风增益（0.0 ~ 2.0）
+    @Published var mixMicGain: Float = Float(UserDefaults.standard.object(forKey: "AudioNote.mixMicGain") as? Double ?? 1.0) {
+        didSet { UserDefaults.standard.set(Double(mixMicGain), forKey: "AudioNote.mixMicGain") }
+    }
+    /// 混录后是否保留原始两路（默认关，合并后删）
+    @Published var keepOriginalTracks: Bool = UserDefaults.standard.bool(forKey: "AudioNote.keepOriginalTracks") {
+        didSet { UserDefaults.standard.set(keepOriginalTracks, forKey: "AudioNote.keepOriginalTracks") }
+    }
+
+    // MARK: - 输出路由（仅系统音频/混录模式生效）
+
     @Published var autoRouteSystemOutput: Bool = true
-    /// 用户选择的 Multi-Output 目标设备；nil 表示自动挑第一个
     @Published var preferredMultiOutputDeviceID: AudioDeviceID?
-    /// 上次路由结果（供 UI 展示提示）
     @Published var lastRouteMessage: String?
-    /// 当前路由到的多输出设备名（录制中显示）
     @Published var activeMultiOutputName: String?
 
     // MARK: - 静音自动停止
 
-    /// 当前持续静音时长（秒）
     @Published var silenceSeconds: TimeInterval = 0
-    /// 启用"静音超时自动停止"
     @Published var silenceAutoStopEnabled: Bool = true
-    /// 静音判定 RMS 阈值（线性，~-34dBFS）
     var silenceLevelThreshold: Float = 0.02
-    /// 超过多少秒静音触发自动停止（默认 5 分钟 = 300s）
     @Published var silenceTimeoutSec: TimeInterval = 300
-    /// 触发静音超时时的回调
     var onSilenceTimeout: (() -> Void)?
 
-    private let state = CaptureState()
-    private var currentFileURL: URL?
+    // MARK: - 内部
+
+    private let systemState = CaptureState()
+    private let micState = CaptureState()
+    private var systemFileURL: URL?
+    private var micFileURL: URL?
+    private var finalFileURL: URL?
     private var timer: Timer?
     private var recordingStart = Date()
     private var pausedDuration: TimeInterval = 0
     private var pauseStart: Date?
     private let maxHistoryPoints = 300
 
-    /// 最近一次录音文件 URL（录音中=当前正在写入的；停止后=最后一次完成的录音）
+    /// 最近一次录音的"最终"文件 URL（A/B 直接=采集 wav；C=合并后的 mix wav 或采集中的 systemFile）
     @Published private(set) var recordingFileURL: URL?
 
-    struct LoopbackDevice: Identifiable, Hashable {
+    /// 通用音频输入设备模型（既能装环回，也能装麦克风）
+    struct AudioInputDevice: Identifiable, Hashable {
         let id: AudioDeviceID
         let name: String
         let uid: String
+        let isLoopback: Bool
+
         var displayName: String {
-            name.lowercased().contains("blackhole") ? "BlackHole（系统音频）" : name
+            if isLoopback, name.lowercased().contains("blackhole") {
+                return "BlackHole（系统音频）"
+            }
+            return name
         }
     }
 
-    // MARK: - 录音/转写文件保存目录（用户可配置）
+    // 兼容旧引用名
+    typealias LoopbackDevice = AudioInputDevice
+
+    init() {}
+
+    // MARK: - 录音保存目录
 
     static let recordingsDirectoryPathKey = "AudioNote.recordingsDirectoryPath"
     static let recordingsDirectoryDefaultsChanged = Notification.Name("AudioNote.recordingsDirectoryChanged")
 
-    /// 默认的录音/转写保存目录（无任何持久化时使用）
     static var defaultRecordingsDirectory: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Documents/AudioNote/Recordings")
     }
 
-    /// 当前生效的录音/转写保存目录
     var recordingsDirectory: URL {
         let url = AudioCaptureEngine.resolveRecordingsDirectory()
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }
 
-    /// 不创建目录、纯路径解析（供 UI 展示用）
     static func resolveRecordingsDirectory() -> URL {
         if let saved = UserDefaults.standard.string(forKey: recordingsDirectoryPathKey),
            !saved.isEmpty {
@@ -151,7 +218,6 @@ final class AudioCaptureEngine: ObservableObject {
         return defaultRecordingsDirectory
     }
 
-    /// 修改保存目录（同时持久化到 UserDefaults 并广播通知）
     func setRecordingsDirectory(_ url: URL) {
         UserDefaults.standard.set(url.path, forKey: AudioCaptureEngine.recordingsDirectoryPathKey)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
@@ -159,7 +225,6 @@ final class AudioCaptureEngine: ObservableObject {
         NotificationCenter.default.post(name: AudioCaptureEngine.recordingsDirectoryDefaultsChanged, object: nil)
     }
 
-    /// 重置为默认（清除持久化）
     func resetRecordingsDirectory() {
         UserDefaults.standard.removeObject(forKey: AudioCaptureEngine.recordingsDirectoryPathKey)
         objectWillChange.send()
@@ -168,13 +233,19 @@ final class AudioCaptureEngine: ObservableObject {
 
     // MARK: - 设备扫描
 
-    /// 当前已采集的总帧数（基于真实采样率），供实时滑窗转写读取游标
-    var capturedFrames: UInt64 { state.totalFrames }
-    /// 当前采集采样率
-    var captureSampleRate: Double { state.captureSampleRate }
+    /// 当前已采集的总帧数（实时转写游标用；混录时返回系统音频那一路）
+    var capturedFrames: UInt64 {
+        recordingMode == .microphone ? micState.totalFrames : systemState.totalFrames
+    }
+    /// 当前采集采样率（实时转写用）
+    var captureSampleRate: Double {
+        recordingMode == .microphone ? micState.captureSampleRate : systemState.captureSampleRate
+    }
 
     func refreshDevices() {
-        var devices: [LoopbackDevice] = []
+        var systemDevices: [AudioInputDevice] = []
+        var micDevices: [AudioInputDevice] = []
+
         var propSize: UInt32 = 0
         var addr = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
@@ -185,18 +256,46 @@ final class AudioCaptureEngine: ObservableObject {
         let count = Int(propSize) / MemoryLayout<AudioDeviceID>.size
         var ids = [AudioDeviceID](repeating: 0, count: count)
         AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &propSize, &ids)
+
         for deviceID in ids {
-            if let name = getDeviceName(deviceID),
-               let uid = getDeviceUID(deviceID),
-               isLoopbackDevice(deviceID, name: name) {
-                devices.append(LoopbackDevice(id: deviceID, name: name, uid: uid))
+            guard let name = getDeviceName(deviceID),
+                  let uid = getDeviceUID(deviceID),
+                  inputChannels(deviceID) > 0 else { continue }
+
+            let loopback = isLoopbackByName(name)
+            let dev = AudioInputDevice(id: deviceID, name: name, uid: uid, isLoopback: loopback)
+            if loopback {
+                systemDevices.append(dev)
+            } else {
+                micDevices.append(dev)
             }
         }
-        availableDevices = devices
-        noDevicesFound = devices.isEmpty
-        if selectedDevice == nil || !devices.contains(where: { $0.id == selectedDevice?.id }) {
-            selectedDevice = devices.first
+
+        availableSystemDevices = systemDevices
+        availableMicDevices = micDevices
+        noDevicesFound = systemDevices.isEmpty && micDevices.isEmpty
+
+        if selectedSystemDevice == nil || !systemDevices.contains(where: { $0.id == selectedSystemDevice?.id }) {
+            selectedSystemDevice = systemDevices.first
         }
+        if selectedMicDevice == nil || !micDevices.contains(where: { $0.id == selectedMicDevice?.id }) {
+            // 优先选系统默认输入设备
+            selectedMicDevice = defaultInputDevice(in: micDevices) ?? micDevices.first
+        }
+    }
+
+    private func defaultInputDevice(in pool: [AudioInputDevice]) -> AudioInputDevice? {
+        var defaultID: AudioDeviceID = 0
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &defaultID) == noErr else {
+            return nil
+        }
+        return pool.first(where: { $0.id == defaultID })
     }
 
     private func getDeviceName(_ deviceID: AudioDeviceID) -> String? {
@@ -210,6 +309,7 @@ final class AudioCaptureEngine: ObservableObject {
         guard AudioObjectGetPropertyData(deviceID, &addr, 0, nil, &size, &name) == noErr else { return nil }
         return name as String?
     }
+
     private func getDeviceUID(_ deviceID: AudioDeviceID) -> String? {
         var uid: CFString?
         var size = UInt32(MemoryLayout<CFString?>.size)
@@ -221,11 +321,8 @@ final class AudioCaptureEngine: ObservableObject {
         guard AudioObjectGetPropertyData(deviceID, &addr, 0, nil, &size, &uid) == noErr else { return nil }
         return uid as String?
     }
-    private func isLoopbackDevice(_ deviceID: AudioDeviceID, name: String) -> Bool {
-        let lower = name.lowercased()
-        guard ["blackhole", "loopback", "soundflower", "virtual", "aggregate", "multi-output"]
-            .contains(where: { lower.contains($0) }) else { return false }
-        var channels: UInt32 = 0
+
+    private func inputChannels(_ deviceID: AudioDeviceID) -> UInt32 {
         var addr = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyStreamConfiguration,
             mScope: kAudioDevicePropertyScopeInput,
@@ -233,35 +330,140 @@ final class AudioCaptureEngine: ObservableObject {
         )
         var sz: UInt32 = 0
         AudioObjectGetPropertyDataSize(deviceID, &addr, 0, nil, &sz)
-        guard sz > 0 else { return false }
+        guard sz > 0 else { return 0 }
         let list = UnsafeMutablePointer<AudioBufferList>.allocate(capacity: 1)
         defer { list.deallocate() }
-        AudioObjectGetPropertyData(deviceID, &addr, 0, nil, &sz, list)
-        for buf in UnsafeMutableAudioBufferListPointer(list) { channels += buf.mNumberChannels }
-        return channels > 0
+        guard AudioObjectGetPropertyData(deviceID, &addr, 0, nil, &sz, list) == noErr else { return 0 }
+        var ch: UInt32 = 0
+        for buf in UnsafeMutableAudioBufferListPointer(list) { ch += buf.mNumberChannels }
+        return ch
     }
 
-    // MARK: - 录制控制
+    private func isLoopbackByName(_ name: String) -> Bool {
+        let lower = name.lowercased()
+        return ["blackhole", "loopback", "soundflower", "virtual", "aggregate", "multi-output"]
+            .contains(where: { lower.contains($0) })
+    }
+
+    // MARK: - 录制控制（入口）
 
     func startRecording() {
-        guard !isRecording, let device = selectedDevice else {
-            Logger.recording.warn("startRecording 中止：isRecording=\(isRecording) selectedDevice=\(selectedDevice?.name ?? "nil")")
+        guard !isRecording else {
+            Logger.recording.warn("startRecording 中止：isRecording=true")
             return
         }
 
-        // 在打开 AudioUnit 之前先做输出路由（避免抢设备引起 glitch）
+        switch recordingMode {
+        case .systemAudio:
+            startSystemAudioOnly()
+        case .microphone:
+            startMicrophoneOnly()
+        case .mix:
+            startMix()
+        }
+    }
+
+    private func startSystemAudioOnly() {
+        guard let device = selectedSystemDevice else {
+            Logger.recording.warn("systemAudio 模式启动失败：未选择系统音频设备")
+            return
+        }
         attemptRouteSystemOutput()
 
-        // 统一命名规则：MMDDHHMMSS.wav
         let filename = "\(stampFmt.string(from: Date())).wav"
         let url = recordingsDirectory.appendingPathComponent(filename)
-        currentFileURL = url
+        systemFileURL = url
+        micFileURL = nil
+        finalFileURL = url
         recordingFileURL = url
 
-        let wav = fopen(url.path, "wb")
-        guard let wav = wav else {
-            Logger.recording.error("无法创建录音文件: \(url.path)")
+        guard openAUHAL(state: systemState, device: device, fileURL: url, tag: "sys") else {
+            cleanupSession(removeFiles: true)
             return
+        }
+        beginTickAndState()
+        Logger.recording.info("录制开始 [systemAudio]: \(filename)")
+    }
+
+    private func startMicrophoneOnly() {
+        guard let device = selectedMicDevice else {
+            Logger.recording.warn("microphone 模式启动失败：未选择麦克风")
+            return
+        }
+        // 麦克风模式不需要路由系统输出
+        activeMultiOutputName = nil
+        lastRouteMessage = nil
+
+        let filename = "\(stampFmt.string(from: Date()))-mic.wav"
+        let url = recordingsDirectory.appendingPathComponent(filename)
+        systemFileURL = nil
+        micFileURL = url
+        finalFileURL = url
+        recordingFileURL = url
+
+        guard openAUHAL(state: micState, device: device, fileURL: url, tag: "mic") else {
+            cleanupSession(removeFiles: true)
+            return
+        }
+        beginTickAndState()
+        Logger.recording.info("录制开始 [microphone]: \(filename)")
+    }
+
+    private func startMix() {
+        guard let sysDev = selectedSystemDevice else {
+            Logger.recording.warn("mix 模式启动失败：未选择系统音频设备")
+            return
+        }
+        guard let micDev = selectedMicDevice else {
+            Logger.recording.warn("mix 模式启动失败：未选择麦克风")
+            return
+        }
+        attemptRouteSystemOutput()
+
+        let stamp = stampFmt.string(from: Date())
+        let sysURL = recordingsDirectory.appendingPathComponent("\(stamp)-sys.wav")
+        let micURL = recordingsDirectory.appendingPathComponent("\(stamp)-mic.wav")
+        let mixURL = recordingsDirectory.appendingPathComponent("\(stamp)-mix.wav")
+
+        systemFileURL = sysURL
+        micFileURL = micURL
+        finalFileURL = mixURL
+        // 实时转写跟随系统音频路：录制中 recordingFileURL 指向 sys，停止后切换到 mix
+        recordingFileURL = sysURL
+
+        guard openAUHAL(state: systemState, device: sysDev, fileURL: sysURL, tag: "sys") else {
+            cleanupSession(removeFiles: true)
+            return
+        }
+        guard openAUHAL(state: micState, device: micDev, fileURL: micURL, tag: "mic") else {
+            // 回滚系统路
+            stopAUHAL(state: systemState)
+            cleanupSession(removeFiles: true)
+            return
+        }
+        beginTickAndState()
+        Logger.recording.info("录制开始 [mix]: sys=\(sysURL.lastPathComponent) mic=\(micURL.lastPathComponent)")
+    }
+
+    private func beginTickAndState() {
+        isRecording = true; isPaused = false
+        recordingStart = Date(); pausedDuration = 0
+        rmsHistory = []
+        silenceSeconds = 0
+
+        timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tick() }
+        }
+    }
+
+    /// 打开并启动一个 AUHAL 单元，绑定指定设备和文件
+    private func openAUHAL(state: CaptureState, device: AudioInputDevice, fileURL: URL, tag: String) -> Bool {
+        state.tag = tag
+
+        let wav = fopen(fileURL.path, "wb")
+        guard let wav = wav else {
+            Logger.recording.error("[\(tag)] 无法创建录音文件: \(fileURL.path)")
+            return false
         }
         state.wavFile = wav
 
@@ -272,14 +474,14 @@ final class AudioCaptureEngine: ObservableObject {
             componentFlags: 0, componentFlagsMask: 0
         )
         guard let comp = AudioComponentFindNext(nil, &acd) else {
-            Logger.recording.error("AudioComponentFindNext failed")
-            fclose(wav); state.wavFile = nil; return
+            Logger.recording.error("[\(tag)] AudioComponentFindNext failed")
+            fclose(wav); state.wavFile = nil; return false
         }
         var au: AudioUnit?
         let newStatus = AudioComponentInstanceNew(comp, &au)
         guard newStatus == noErr, let audioUnit = au else {
-            Logger.recording.error("AudioComponentInstanceNew failed: \(newStatus)")
-            fclose(wav); state.wavFile = nil; return
+            Logger.recording.error("[\(tag)] AudioComponentInstanceNew failed: \(newStatus)")
+            fclose(wav); state.wavFile = nil; return false
         }
 
         var enable: UInt32 = 1
@@ -287,23 +489,21 @@ final class AudioCaptureEngine: ObservableObject {
         var s: OSStatus
         s = AudioUnitSetProperty(audioUnit, kAudioOutputUnitProperty_EnableIO,
             kAudioUnitScope_Input, 1, &enable, UInt32(MemoryLayout<UInt32>.size))
-        Logger.recording.info("EnableIO Input: \(s)")
+        Logger.recording.info("[\(tag)] EnableIO Input: \(s)")
         s = AudioUnitSetProperty(audioUnit, kAudioOutputUnitProperty_EnableIO,
             kAudioUnitScope_Output, 0, &disable, UInt32(MemoryLayout<UInt32>.size))
-        Logger.recording.info("EnableIO Output: \(s)")
+        Logger.recording.info("[\(tag)] EnableIO Output: \(s)")
         var deviceID = device.id
         s = AudioUnitSetProperty(audioUnit, kAudioOutputUnitProperty_CurrentDevice,
             kAudioUnitScope_Global, 0, &deviceID, UInt32(MemoryLayout<AudioDeviceID>.size))
-        Logger.recording.info("SetCurrentDevice id=\(deviceID) name=\(device.name) status=\(s)")
+        Logger.recording.info("[\(tag)] SetCurrentDevice id=\(deviceID) name=\(device.name) status=\(s)")
 
-        // 查询输入设备的实际格式（采样率），AUHAL 不会自动重采样输入
         var inputASBD = AudioStreamBasicDescription()
         var asbdSize = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
         AudioUnitGetProperty(audioUnit, kAudioUnitProperty_StreamFormat,
             kAudioUnitScope_Input, 1, &inputASBD, &asbdSize)
-        Logger.recording.info("Device native format: sr=\(inputASBD.mSampleRate) ch=\(inputASBD.mChannelsPerFrame)")
+        Logger.recording.info("[\(tag)] Device native format: sr=\(inputASBD.mSampleRate) ch=\(inputASBD.mChannelsPerFrame)")
 
-        // 输出格式：保持设备原生采样率，单声道 float32（让 AUHAL 做声道下混）
         let nativeSR = inputASBD.mSampleRate > 0 ? inputASBD.mSampleRate : 48000
         var asbd = AudioStreamBasicDescription(
             mSampleRate: nativeSR, mFormatID: kAudioFormatLinearPCM,
@@ -313,10 +513,9 @@ final class AudioCaptureEngine: ObservableObject {
         )
         s = AudioUnitSetProperty(audioUnit, kAudioUnitProperty_StreamFormat,
             kAudioUnitScope_Output, 1, &asbd, UInt32(MemoryLayout<AudioStreamBasicDescription>.size))
-        Logger.recording.info("SetStreamFormat output status=\(s) sr=\(nativeSR)")
+        Logger.recording.info("[\(tag)] SetStreamFormat output status=\(s) sr=\(nativeSR)")
         state.captureSampleRate = nativeSR
 
-        // 现在已知真实采样率，写正确的 WAV header（边录边转的脚本会读取）
         writeWAVHeader(wav, dataSize: 0, sampleRate: UInt32(nativeSR))
         fflush(wav)
 
@@ -332,37 +531,47 @@ final class AudioCaptureEngine: ObservableObject {
 
         let initStatus = AudioUnitInitialize(audioUnit)
         let startStatus = AudioOutputUnitStart(audioUnit)
-        Logger.recording.info("Init=\(initStatus) Start=\(startStatus)")
+        Logger.recording.info("[\(tag)] Init=\(initStatus) Start=\(startStatus)")
         guard initStatus == noErr, startStatus == noErr else {
             fclose(wav); state.wavFile = nil
-            state.audioUnit = nil; return
+            state.audioUnit = nil
+            return false
         }
 
-        isRecording = true; isPaused = false
-        recordingStart = Date(); pausedDuration = 0
-        rmsHistory = []; state.rmsSum = 0; state.rmsCount = 0
-        silenceSeconds = 0
-        // 关键：重置帧/回调计数，否则同进程内第二次录制 frame 游标会沿用第一次的累积值，
-        // 导致 ASR 滑窗用错误的 start/end-frame 去切 wav，partial 转写全程为空
+        // 重置计数器
+        state.rmsSum = 0; state.rmsCount = 0
         state.totalFrames = 0
         state.callbackCount = 0
         state.lastRenderError = 0
         state.flushCounter = 0
+        return true
+    }
 
-        timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tick() }
+    private func stopAUHAL(state: CaptureState) {
+        if let au = state.audioUnit {
+            AudioOutputUnitStop(au); AudioUnitUninitialize(au)
+            AudioComponentInstanceDispose(au)
         }
-        Logger.recording.info("录制开始: \(filename)")
+        state.audioUnit = nil
+        if let f = state.wavFile { fclose(f); state.wavFile = nil }
     }
 
     func pauseRecording() {
-        guard isRecording, !isPaused, let au = state.audioUnit else { return }
-        AudioOutputUnitStop(au); isPaused = true; pauseStart = Date()
+        guard isRecording, !isPaused else { return }
+        if let au = systemState.audioUnit { AudioOutputUnitStop(au) }
+        if let au = micState.audioUnit { AudioOutputUnitStop(au) }
+        isPaused = true
+        pauseStart = Date()
     }
 
     func resumeRecording() {
-        guard isRecording, isPaused, let au = state.audioUnit else { return }
-        AudioOutputUnitStart(au); pausedDuration += Date().timeIntervalSince(pauseStart!); isPaused = false
+        guard isRecording, isPaused else { return }
+        if let au = systemState.audioUnit { AudioOutputUnitStart(au) }
+        if let au = micState.audioUnit { AudioOutputUnitStart(au) }
+        if let start = pauseStart {
+            pausedDuration += Date().timeIntervalSince(start)
+        }
+        isPaused = false
         silenceSeconds = 0
     }
 
@@ -370,43 +579,114 @@ final class AudioCaptureEngine: ObservableObject {
     func stopRecording() -> URL? {
         guard isRecording else { return nil }
         timer?.invalidate(); timer = nil
-        if let au = state.audioUnit {
-            AudioOutputUnitStop(au); AudioUnitUninitialize(au)
-            AudioComponentInstanceDispose(au)
-        }
-        state.audioUnit = nil
 
-        if let f = state.wavFile { fclose(f); state.wavFile = nil }
-        if let cu = currentFileURL {
-            updateWAVHeader(cu, sampleRate: UInt32(state.captureSampleRate))
+        // 停止双路 AUHAL
+        let usedSystem = systemState.audioUnit != nil
+        let usedMic = micState.audioUnit != nil
+        stopAUHAL(state: systemState)
+        stopAUHAL(state: micState)
+
+        // 回填 WAV header
+        if usedSystem, let url = systemFileURL {
+            updateWAVHeader(url, sampleRate: UInt32(systemState.captureSampleRate))
+        }
+        if usedMic, let url = micFileURL {
+            updateWAVHeader(url, sampleRate: UInt32(micState.captureSampleRate))
         }
 
-        // 还原系统输出（如果之前切过）
         restoreSystemOutput()
 
-        Logger.recording.info("诊断: callbacks=\(state.callbackCount) frames=\(state.totalFrames) lastErr=\(state.lastRenderError) sr=\(state.captureSampleRate)")
+        Logger.recording.info("诊断 sys: cb=\(systemState.callbackCount) frames=\(systemState.totalFrames) err=\(systemState.lastRenderError) sr=\(systemState.captureSampleRate)")
+        Logger.recording.info("诊断 mic: cb=\(micState.callbackCount) frames=\(micState.totalFrames) err=\(micState.lastRenderError) sr=\(micState.captureSampleRate)")
 
-        let url = currentFileURL; currentFileURL = nil
+        let elapsedNow = elapsedTime
         isRecording = false; isPaused = false; rmsLevel = 0
 
-        if elapsedTime < 1, let url = url {
-            try? FileManager.default.removeItem(at: url)
-            recordingFileURL = nil
+        // 太短直接清理
+        if elapsedNow < 1 {
+            cleanupSession(removeFiles: true)
             return nil
         }
-        if let url = url, FileManager.default.fileExists(atPath: url.path) {
-            let sz = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
-            Logger.recording.info("停止: \(url.lastPathComponent) (\(sz/1024)KB, \(Int(elapsedTime))s)")
-            recordingFileURL = url
-            return url
+
+        // 模式分流
+        switch recordingMode {
+        case .systemAudio:
+            let url = systemFileURL
+            systemFileURL = nil; finalFileURL = nil
+            if let url = url, FileManager.default.fileExists(atPath: url.path) {
+                Logger.recording.info("停止 [systemAudio]: \(url.lastPathComponent)")
+                recordingFileURL = url
+                return url
+            }
+            recordingFileURL = nil
+            return nil
+
+        case .microphone:
+            let url = micFileURL
+            micFileURL = nil; finalFileURL = nil
+            if let url = url, FileManager.default.fileExists(atPath: url.path) {
+                Logger.recording.info("停止 [microphone]: \(url.lastPathComponent)")
+                recordingFileURL = url
+                return url
+            }
+            recordingFileURL = nil
+            return nil
+
+        case .mix:
+            guard let sysURL = systemFileURL,
+                  let micURL = micFileURL,
+                  let mixURL = finalFileURL else {
+                Logger.recording.error("mix 停止异常：缺少必要 URL")
+                cleanupSession(removeFiles: true)
+                return nil
+            }
+            // 同步混音（阻塞但耗时短，<2s 对几分钟录音；为简单起见走主线程）
+            let sysGain = mixSystemGain
+            let micGain = mixMicGain
+            let keepOriginals = keepOriginalTracks
+            let ok = AudioMixer.merge(systemURL: sysURL, systemGain: sysGain,
+                                       micURL: micURL, micGain: micGain,
+                                       outputURL: mixURL)
+            systemFileURL = nil; micFileURL = nil; finalFileURL = nil
+
+            if ok, FileManager.default.fileExists(atPath: mixURL.path) {
+                if !keepOriginals {
+                    try? FileManager.default.removeItem(at: sysURL)
+                    try? FileManager.default.removeItem(at: micURL)
+                }
+                Logger.recording.info("停止 [mix]: 合并完成 -> \(mixURL.lastPathComponent)")
+                recordingFileURL = mixURL
+                return mixURL
+            } else {
+                Logger.recording.error("mix 合并失败，回退到系统音频 wav 作为最终产物")
+                // 合并失败兜底：用 sys.wav 作为最终结果，删 mic
+                try? FileManager.default.removeItem(at: micURL)
+                if FileManager.default.fileExists(atPath: sysURL.path) {
+                    recordingFileURL = sysURL
+                    return sysURL
+                }
+                recordingFileURL = nil
+                return nil
+            }
         }
-        recordingFileURL = nil
-        return nil
     }
 
-    // MARK: - 便捷方法（兼容 AudioNote 现有 UI）
+    /// 异常路径清理
+    private func cleanupSession(removeFiles: Bool) {
+        timer?.invalidate(); timer = nil
+        stopAUHAL(state: systemState)
+        stopAUHAL(state: micState)
+        if removeFiles {
+            if let url = systemFileURL { try? FileManager.default.removeItem(at: url) }
+            if let url = micFileURL { try? FileManager.default.removeItem(at: url) }
+        }
+        systemFileURL = nil; micFileURL = nil; finalFileURL = nil
+        recordingFileURL = nil
+        isRecording = false; isPaused = false
+    }
 
-    /// `MM:SS` 或 `H:MM:SS` 格式
+    // MARK: - 便捷方法
+
     func formattedElapsed() -> String {
         let t = Int(elapsedTime)
         let h = t / 3600
@@ -418,12 +698,18 @@ final class AudioCaptureEngine: ObservableObject {
         return String(format: "%02d:%02d", m, s)
     }
 
-    // MARK: - 内部
+    // MARK: - 内部 tick
 
     private func tick() {
         guard isRecording, !isPaused else { return }
         elapsedTime = Date().timeIntervalSince(recordingStart) - pausedDuration
-        let avg = state.drainRMS()
+
+        // RMS 取决于当前主活动路：mix/systemAudio 以系统路为准；microphone 用 mic 路
+        let primaryState = (recordingMode == .microphone) ? micState : systemState
+        let avg = primaryState.drainRMS()
+        // 另一路也排空，避免 RMS 无限累积
+        if recordingMode == .mix { _ = micState.drainRMS() }
+
         if avg > 0 {
             let dbfs = 20 * log10(max(avg, 1e-10))
             rmsLevel = max(0, min(1, (dbfs + 50) / 50))
@@ -445,6 +731,8 @@ final class AudioCaptureEngine: ObservableObject {
             onSilenceTimeout?()
         }
     }
+
+    // MARK: - WAV header
 
     private func writeWAVHeader(_ file: UnsafeMutablePointer<FILE>, dataSize: UInt32, sampleRate: UInt32) {
         let sr = sampleRate, ch: UInt16 = 1, bps: UInt16 = 16
@@ -472,7 +760,6 @@ final class AudioCaptureEngine: ObservableObject {
 
     // MARK: - 系统输出路由
 
-    /// 录制开始时尝试将系统输出切到多输出设备
     private func attemptRouteSystemOutput() {
         guard autoRouteSystemOutput else {
             lastRouteMessage = nil
@@ -506,7 +793,6 @@ final class AudioCaptureEngine: ObservableObject {
         }
     }
 
-    /// 停止录制时还原系统输出
     private func restoreSystemOutput() {
         let router = OutputDeviceRouter.shared
         if router.restore() {
@@ -518,7 +804,6 @@ final class AudioCaptureEngine: ObservableObject {
         lastRouteMessage = nil
     }
 
-    /// 统一文件命名时间戳：MMDDHHMMSS（10 位）
     private let stampFmt: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
@@ -529,11 +814,10 @@ final class AudioCaptureEngine: ObservableObject {
 }
 
 extension Notification.Name {
-    /// 录制启动时未发现 Multi-Output Device，UI 应弹引导
     static let audioNoteMultiOutputMissing = Notification.Name("AudioNote.MultiOutputMissing")
 }
 
-// MARK: - AudioUnit 渲染回调
+// MARK: - AudioUnit 渲染回调（统一）
 
 private func audioRenderCallback(
     _ inRefCon: UnsafeMutableRawPointer,
@@ -543,7 +827,6 @@ private func audioRenderCallback(
     _ inNumberFrames: UInt32,
     _ ioData: UnsafeMutablePointer<AudioBufferList>?
 ) -> OSStatus {
-    // 注意：对于 input AudioUnit，ioData 通常是 NULL，必须我们自己构造 buffer list
     let state = Unmanaged<CaptureState>.fromOpaque(inRefCon).takeUnretainedValue()
     guard let au = state.audioUnit else { return noErr }
 
@@ -563,7 +846,7 @@ private func audioRenderCallback(
     let status = AudioUnitRender(au, ioActionFlags, inTimeStamp, inBusNumber, inNumberFrames, &bufferList)
     guard status == noErr else {
         state.lastRenderError = status
-        return noErr  // 返回 noErr 不阻断后续回调
+        return noErr
     }
 
     state.totalFrames &+= UInt64(fc)

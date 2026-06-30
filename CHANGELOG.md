@@ -2,6 +2,30 @@
 
 本文档记录 AudioNote 的重要变更。版本号遵循 [Semantic Versioning](https://semver.org/)。
 
+## [0.2.0] - 2026-06-30
+
+### Added
+- **录制模式三选一**：录制现在支持三种输入源
+  - **系统音频**（保持原有能力，绑定 BlackHole 等环回设备）
+  - **麦克风**（直接采集物理麦克风：内置麦/AirPods/USB 麦/iPhone 麦等）
+  - **系统音频 + 麦克风混录**（双路 AUHAL 并行采集 → 停止后 ffmpeg `amix` 合并为单文件）
+- 新增 `Sources/Engine/AudioMixer.swift`：基于 ffmpeg `volume + amix(normalize=0)` 的两路合并，支持独立增益控制
+- 录制设置加入「系统音频音量」「麦克风音量」两个 0-200% 滑块（仅混录模式可见）
+- 录制设置加入「保留原始两路音频」开关（默认关，合并后自动清理）
+- 录制中心顶部 pill 升级：模式 pill（点击下拉切换）+ 设备 pill（点击展开设备选择 sheet）
+- 设备选择 sheet 升级：根据当前模式自动展示对应设备分区（mix 模式同时显示两路）
+
+### Changed
+- `AudioCaptureEngine.availableDevices` 拆分为 `availableSystemDevices` / `availableMicDevices`（旧字段保留为兼容别名）
+- `AudioCaptureEngine.selectedDevice` 拆分为 `selectedSystemDevice` / `selectedMicDevice`（旧字段保留为兼容别名）
+- 设备扫描不再以"loopback 关键字白名单"过滤设备，改为「同时枚举所有 input devices → 按名字关键字归类为系统/麦克风两组」
+- 录制文件命名规则：仅系统 `MMDDHHmmss.wav`、仅麦克风 `MMDDHHmmss-mic.wav`、混录最终 `MMDDHHmmss-mix.wav`（保留原始时另存 `-sys.wav` / `-mic.wav`）
+- `NSMicrophoneUsageDescription` 文案更新，明确覆盖混录场景
+
+### Notes
+- 混录模式下「录制中实时转写预览」只跟随系统音频那一路；停止录制后任务队列会对合并后的完整 wav 重新转写一遍。这是 ffmpeg 后处理方案（C3）的固有特性。
+- 静音超时判定依然以主活动路（mix 模式 = 系统音频路）的 RMS 为准，避免环境噪音误触发。
+
 ## [0.1.1] - 2026-06-29
 
 ### Added
