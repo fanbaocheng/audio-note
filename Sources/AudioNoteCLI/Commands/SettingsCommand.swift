@@ -78,6 +78,8 @@ struct SettingsCommand: AsyncParsableCommand {
         @OptionGroup var common: CommonOptions
         @Argument(help: "配置 key（点号路径）")
         var key: String
+        @Flag(name: .long, help: "只输出裸值（无 'key = ' 前缀，便于 shell 脚本直接取用）")
+        var raw: Bool = false
 
         mutating func run() async throws {
             common.applyOutputMode()
@@ -86,7 +88,11 @@ struct SettingsCommand: AsyncParsableCommand {
                 throw ExitCodeWrapper(64)
             }
             let v = SettingsCommand.readValue(ud: AppDefaults.shared, meta: meta)
-            CLIOut.result(["key": key, "value": v as Any], humanText: "\(key) = \(String(describing: v ?? ""))")
+            let raw = self.raw
+            let humanText = raw
+                ? String(describing: v ?? "")
+                : "\(key) = \(String(describing: v ?? ""))"
+            CLIOut.result(["key": key, "value": v as Any], humanText: humanText)
         }
     }
 
