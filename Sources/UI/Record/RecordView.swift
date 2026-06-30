@@ -130,7 +130,7 @@ struct RecordView: View {
                     .font(.callout.weight(.medium))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
-                Image(systemName: "chevron.up.chevron.down")
+                Image(systemName: recorder.isRecording ? "lock.fill" : "chevron.up.chevron.down")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -142,9 +142,11 @@ struct RecordView: View {
                     .overlay(Capsule().stroke(DS.Surface.separator, lineWidth: 0.5))
             )
             .contentShape(Capsule())
+            .opacity(recorder.isRecording ? 0.5 : 1.0)
         }
         .buttonStyle(.plain)
-        .help("点击切换录制模式")
+        .disabled(recorder.isRecording)
+        .help(recorder.isRecording ? "录制中无法切换，请先停止" : "点击切换录制模式")
         .popover(isPresented: $showModePicker, arrowEdge: .bottom) {
             modePickerPopover
         }
@@ -212,7 +214,7 @@ struct RecordView: View {
                     .font(.callout.weight(.medium))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
-                Image(systemName: "chevron.up.chevron.down")
+                Image(systemName: recorder.isRecording ? "lock.fill" : "chevron.up.chevron.down")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -224,9 +226,11 @@ struct RecordView: View {
                     .overlay(Capsule().stroke(DS.Surface.separator, lineWidth: 0.5))
             )
             .contentShape(Capsule())
+            .opacity(recorder.isRecording ? 0.5 : 1.0)
         }
         .buttonStyle(.plain)
-        .help("点击切换音频源设备")
+        .disabled(recorder.isRecording)
+        .help(recorder.isRecording ? "录制中无法切换，请先停止" : "点击切换音频源设备")
         .popover(isPresented: $showDevicePicker, arrowEdge: .bottom) {
             devicePickerPopover
         }
