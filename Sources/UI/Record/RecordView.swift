@@ -6,6 +6,7 @@ struct RecordView: View {
     @EnvironmentObject var asr: ASRService
     @EnvironmentObject var scheduler: TaskScheduler
     @State private var showDevicePicker: Bool = false
+    @State private var showModePicker: Bool = false
 
     var body: some View {
         VStack(spacing: DS.Spacing.md) {
@@ -123,13 +124,7 @@ struct RecordView: View {
     // MARK: - 录制模式 Pill
 
     private var modeSelectorPill: some View {
-        Menu {
-            ForEach(RecordingMode.allCases, id: \.self) { mode in
-                Button(action: { recorder.recordingMode = mode }) {
-                    Label(mode.displayName, systemImage: mode.iconName)
-                }
-            }
-        } label: {
+        Button(action: { showModePicker = true }) {
             HStack(spacing: 6) {
                 Image(systemName: recorder.recordingMode.iconName)
                     .foregroundStyle(.orange)
@@ -151,10 +146,61 @@ struct RecordView: View {
             )
             .contentShape(Capsule())
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("切换录制模式")
+        .buttonStyle(.plain)
+        .help("点击切换录制模式")
+        .popover(isPresented: $showModePicker, arrowEdge: .bottom) {
+            modePickerPopover
+        }
+    }
+
+    private var modePickerPopover: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(RecordingMode.allCases, id: \.self) { mode in
+                Button(action: {
+                    recorder.recordingMode = mode
+                    showModePicker = false
+                }) {
+                    HStack(spacing: 10) {
+                        Image(systemName: mode.iconName)
+                            .foregroundStyle(.orange)
+                            .frame(width: 18)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(mode.displayName)
+                                .font(.callout.weight(.medium))
+                                .foregroundStyle(.primary)
+                            Text(modeDescription(mode))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if recorder.recordingMode == mode {
+                            Image(systemName: "checkmark")
+                                .foregroundStyle(.blue)
+                                .font(.callout)
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(recorder.recordingMode == mode ? Color.accentColor.opacity(0.08) : .clear)
+                )
+            }
+        }
+        .padding(8)
+        .frame(width: 280)
+    }
+
+    private func modeDescription(_ mode: RecordingMode) -> String {
+        switch mode {
+        case .systemAudio: return "从声卡 / 虚拟设备捕获系统输出"
+        case .microphone:  return "从麦克风录制人声"
+        case .mix:         return "声卡 + 麦克风混录（后处理合并）"
+        }
     }
 
     // MARK: - 音频源选择 Pill（设备）
