@@ -355,83 +355,131 @@ struct RecordView: View {
     // MARK: - 设备选择
 
     private var devicePickerSheet: some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.md) {
-            Text("选择音频源").font(.headline)
-                .frame(maxWidth: .infinity, alignment: .center)
-
-            // 系统音频区（systemAudio / mix 显示）
-            if recorder.recordingMode == .systemAudio || recorder.recordingMode == .mix {
-                Text("系统音频")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                if recorder.availableSystemDevices.isEmpty {
-                    Text("未检测到环回设备（BlackHole 等）")
-                        .font(.callout)
-                        .foregroundStyle(.tertiary)
-                        .padding(.vertical, 8)
-                } else {
-                    List(recorder.availableSystemDevices) { device in
-                        Button(action: {
-                            recorder.selectedSystemDevice = device
-                            if recorder.recordingMode != .mix { showDevicePicker = false }
-                        }) {
-                            HStack {
-                                Text(device.displayName)
-                                Spacer()
-                                if recorder.selectedSystemDevice?.id == device.id {
-                                    Image(systemName: "checkmark").foregroundStyle(.blue)
-                                }
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .frame(height: 110)
-                }
-            }
-
-            // 麦克风区（microphone / mix 显示）
-            if recorder.recordingMode == .microphone || recorder.recordingMode == .mix {
-                Text("麦克风")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                if recorder.availableMicDevices.isEmpty {
-                    Text("未检测到麦克风设备")
-                        .font(.callout)
-                        .foregroundStyle(.tertiary)
-                        .padding(.vertical, 8)
-                } else {
-                    List(recorder.availableMicDevices) { device in
-                        Button(action: {
-                            recorder.selectedMicDevice = device
-                            if recorder.recordingMode != .mix { showDevicePicker = false }
-                        }) {
-                            HStack {
-                                Text(device.displayName)
-                                Spacer()
-                                if recorder.selectedMicDevice?.id == device.id {
-                                    Image(systemName: "checkmark").foregroundStyle(.blue)
-                                }
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .frame(height: 110)
-                }
-            }
-
+        VStack(alignment: .leading, spacing: 10) {
+            // 顶部标题栏
             HStack {
-                Button("刷新设备") { recorder.refreshDevices() }
+                Text("选择音频源")
+                    .font(.headline)
                 Spacer()
-                Button("关闭") { showDevicePicker = false }
-                    .keyboardShortcut(.defaultAction)
+                Button {
+                    recorder.refreshDevices()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.callout)
+                }
+                .buttonStyle(.borderless)
+                .help("刷新设备列表")
             }
+            .padding(.bottom, 2)
+
+            // 系统音频区
+            if recorder.recordingMode == .systemAudio || recorder.recordingMode == .mix {
+                deviceSection(
+                    title: "系统音频",
+                    emptyHint: "未检测到环回设备（BlackHole 等）",
+                    devices: recorder.availableSystemDevices,
+                    isSelected: { recorder.selectedSystemDevice?.id == $0.id },
+                    onSelect: { device in
+                        recorder.selectedSystemDevice = device
+                        if recorder.recordingMode != .mix { showDevicePicker = false }
+                    }
+                )
+            }
+
+            // 麦克风区
+            if recorder.recordingMode == .microphone || recorder.recordingMode == .mix {
+                deviceSection(
+                    title: "麦克风",
+                    emptyHint: "未检测到麦克风设备",
+                    devices: recorder.availableMicDevices,
+                    isSelected: { recorder.selectedMicDevice?.id == $0.id },
+                    onSelect: { device in
+                        recorder.selectedMicDevice = device
+                        if recorder.recordingMode != .mix { showDevicePicker = false }
+                    }
+                )
+            }
+
+            // 底部关闭按钮
+            HStack {
+                Spacer()
+                Button("完成") { showDevicePicker = false }
+                    .keyboardShortcut(.defaultAction)
+                    .controlSize(.regular)
+            }
+            .padding(.top, 2)
         }
-        .frame(width: 420, height: pickerSheetHeight)
-        .padding()
+        .padding(14)
+        .frame(width: 360)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
-    private var pickerSheetHeight: CGFloat {
-        recorder.recordingMode == .mix ? 460 : 280
+    @ViewBuilder
+    private func deviceSection(
+        title: String,
+        emptyHint: String,
+        devices: [AudioCaptureEngine.AudioInputDevice],
+        isSelected: @escaping (AudioCaptureEngine.AudioInputDevice) -> Bool,
+        onSelect: @escaping (AudioCaptureEngine.AudioInputDevice) -> Void
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.leading, 2)
+
+            if devices.isEmpty {
+                Text(emptyHint)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(DS.Surface.controlBg.opacity(0.5))
+                    )
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(devices.enumerated()), id: \.element.id) { index, device in
+                        Button(action: { onSelect(device) }) {
+                            HStack(spacing: 8) {
+                                Text(device.displayName)
+                                    .font(.callout)
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(1)
+                                Spacer()
+                                if isSelected(device) {
+                                    Image(systemName: "checkmark")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.blue)
+                                }
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .background(
+                            isSelected(device)
+                                ? Color.blue.opacity(0.08)
+                                : Color.clear
+                        )
+                        if index < devices.count - 1 {
+                            Divider().padding(.leading, 10)
+                        }
+                    }
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(DS.Surface.controlBg.opacity(0.5))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(DS.Surface.separator, lineWidth: 0.5)
+                )
+            }
+        }
     }
 
     private var canStartRecording: Bool {
