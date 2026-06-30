@@ -359,7 +359,8 @@ struct SettingsView: View {
             AppIconView(size: 96)
 
             Text("AudioNote").font(.title.weight(.bold))
-            Text("v1.0").font(.caption).foregroundStyle(.secondary)
+            Text(appVersionDisplay).font(.caption).foregroundStyle(.secondary)
+                .textSelection(.enabled)
 
             VStack(spacing: 4) {
                 Text("把任何来源的声音变成文字稿").font(.callout)
@@ -398,6 +399,19 @@ struct SettingsView: View {
                 .padding(.bottom, 4)
         }
         .padding()
+    }
+
+    // MARK: - 版本信息
+
+    /// 从 Info.plist 读出 marketing version + build version，形如 "v1.0.1 (1.0.1_2026/06/30_18:37:57)"
+    private var appVersionDisplay: String {
+        let info = Bundle.main.infoDictionary
+        let short = (info?["CFBundleShortVersionString"] as? String) ?? "?"
+        let build = (info?["CFBundleVersion"] as? String) ?? ""
+        if build.isEmpty || build == short {
+            return "v\(short)"
+        }
+        return "v\(short)  ·  \(build)"
     }
 
     // MARK: - 操作
