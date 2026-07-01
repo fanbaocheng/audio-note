@@ -63,8 +63,13 @@ struct RecordView: View {
             // 状态
             Text(stateText)
                 .font(.system(size: DS.Font.secondary))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(silenceWarningColor)
                 .lineLimit(1)
+
+            // 静音倒计时（只在录制中且静音累积时显示）
+            if recorder.isRecording, !recorder.isPaused, recorder.silenceSeconds > 0 {
+                silenceCountdown
+            }
 
             // 控制按钮（按钮稍小，整体下移）
             HStack(spacing: DS.Spacing.md) {
@@ -493,7 +498,57 @@ struct RecordView: View {
     private var stateText: String {
         if !recorder.isRecording { return "待机" }
         if recorder.isPaused { return "已暂停" }
+        if recorder.silenceSeconds > 0 { return "静音中" }
         return "录制中"
+    }
+
+    /// 静音进度条 + 倒计时文字（只在静音累积时显示）
+    private var silenceCountdown: some View {
+        let ratio = min(1.0, recorder.silenceSeconds / recorder.silenceTimeoutSec)
+        let color = silenceWarningColor
+
+        return VStack(spacing: 4) {
+            // 进度条（从空到满）
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(.quaternary)
+                        .frame(height: 4)
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(color)
+                        .frame(width: geo.size.width * ratio, height: 4)
+                        .animation(.easeOut(duration: 0.1), value: ratio)
+                }
+            }
+            .frame(height: 4)
+
+            // 倒计时文字
+            HStack(spacing: 4) {
+                Image(systemName: "mic.slash.fill")
+                    .font(.caption2)
+                    .foregroundStyle(color)
+                Text("已静音 \(formattedSilenceSeconds()) / \(formattedSilenceTimeout())")
+                    .font(.caption)
+                    .foregroundStyle(color)
+                    .monospacedDigit()
+            }
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 2)
+    }
+
+    /// 静音进度颜色：正常 → 80% 黄 → 90% 红闪烁
+    private var silenceWarningColor: Color {
+        if recorder.silenceSeconds <= 0 { return .secondary }
+        let ratio = recorder.silenceSeconds / recorder.silenceTimeoutSec
+        if ratio >= 0.9 {
+            // 最后 10%：红/灰交替闪烁（约 1 Hz）
+            return Int(Date().timeIntervalSince1970 * 1.0).isMultiple(of: 2) ? .red : .secondary
+        }
+        if ratio >= 0.8 { return .orange }
+        // 正在静音但未到警告阈值
+        if recorder.silenceSeconds > 0 { return .secondary }
+        return .secondary
     }
 
     private func startRecording() {
@@ -516,6 +571,18 @@ struct RecordView: View {
             Logger.recording.info("用户触发停止并转写", metadata: ["file": fileURL.lastPathComponent])
             scheduler.enqueueRecording(fileURL: fileURL)
         }
+    }
+
+    // MARK: - 格式化
+
+    private func formattedSilenceSeconds() -> String {
+        let t = Int(recorder.silenceSeconds.rounded())
+        return String(format: "%02d:%02d", t / 60, t % 60)
+    }
+
+    private func formattedSilenceTimeout() -> String {
+        let t = Int(recorder.silenceTimeoutSec.rounded())
+        return String(format: "%02d:%02d", t / 60, t % 60)
     }
 }
 
