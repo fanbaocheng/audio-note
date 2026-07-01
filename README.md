@@ -266,7 +266,7 @@ audio-note transcribe "https://..." --json
 
 详细用法、JSON Lines 协议规范（7 种事件类型）、退出码表、Agent 集成示例见 **[CLI.md](./CLI.md)**。
 
-> 💡 **WorkBuddy 用户**：本仓库已内置 `audio-note-cli` Skill（`.workbuddy/skills/audio-note-cli/`），可直接安装到你的 WorkBuddy 使用。
+> 💡 **WorkBuddy 用户**：本仓库已内置 `audio-note-cli` Skill（`skills/audio-note-cli.md`），可直接安装到你的 WorkBuddy 使用。
 
 ### 和 GUI 的关系
 

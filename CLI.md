@@ -3,7 +3,7 @@
 > `audio-note` 是 AudioNote 的命令行工具，与 GUI App **共享同一份数据、配置和任务库**。
 > 设计目标：让 AI Agent（WorkBuddy / Claude Code / Cursor / 脚本）能通过 JSON Lines 协议接入 AudioNote 的录制、转写、下载能力。
 >
-> **WorkBuddy 用户**：本仓库已内置 `audio-note-cli` Skill（`.workbuddy/skills/audio-note-cli/`），
+> **WorkBuddy 用户**：本仓库已内置 `audio-note-cli` Skill（`skills/audio-note-cli.md`），
 > 安装到你的 WorkBuddy 后即可让 Agent 直接调用本 CLI 的全部能力。详见 [第 8 节 Agent 集成示例](#8-agent-集成示例)。
 
 ---
