@@ -127,8 +127,12 @@ WorkBuddy 会自动把这条变成一个 RRULE 自动化跑起来。其它 Agent
 
 ```
 ┌────────────────────────────────────────────────────────────┐
-│                       SwiftUI UI 层                        │
-│   RecordView · DownloadView · TaskQueueView · Transcript   │
+│                 SwiftUI UI 层（仅 GUI）                    │
+│   RecordView · DownloadView · TaskQueueView · Settings    │
+├────────────────────────────────────────────────────────────┤
+│                 CLI 入口层（audio-note）                   │
+│   device · settings · library · record · transcribe ·     │
+│   download（14 个子命令，JSON Lines stdout 协议）         │
 └─────────────────────────┬──────────────────────────────────┘
                           │
 ┌─────────────────────────▼──────────────────────────────────┐
@@ -162,24 +166,20 @@ WorkBuddy 会自动把这条变成一个 RRULE 自动化跑起来。其它 Agent
 AudioNote/                         # 工程根（GitHub 仓库名 audio-note）
 ├── Package.swift                  # SwiftPM manifest（macOS 13+，executable target AudioNote）
 ├── README.md                      # 本文件
+├── CLI.md                         # CLI 完整命令参考（Agent / 脚本集成文档）
 ├── ARCHITECTURE.md                # 架构 / 数据流 / 关键设计决策
 ├── DEVELOPMENT.md                 # 开发指南：环境准备 / 构建 / 调试 / 打包
 ├── CHANGELOG.md                   # 版本变更记录
 ├── LICENSE                        # MIT
 ├── Sources/
-│   ├── App/                       # @main 入口、Scene 配置
-│   ├── Bridge/                    # BinaryResolver 4 级二进制定位
-│   ├── Core/                      # DependencyManager 依赖自检
-│   ├── Engine/                    # 业务引擎（Download / AudioCapture / AudioProcessing / ASR）
-│   ├── Logging/                   # 统一日志
-│   ├── Models/                    # UniTask / TaskStatus / TaskSnapshot 核心类型
-│   ├── Orchestration/             # TaskScheduler + UnifiedPipeline
-│   └── UI/                        # SwiftUI 视图（Record / Download / Queue / Transcript / Settings）
+│   ├── AudioNoteCore/             # 共享核心库（Engine / Models / Orchestration / Bridge / Logging）
+│   ├── AudioNoteApp/              # GUI executable（SwiftUI 视图）
+│   └── AudioNoteCLI/              # CLI executable（audio-note 命令行工具，14 个子命令）
 ├── Tests/                         # 单测（最小骨架）
 ├── scripts/
 │   ├── transcribe.py              # sherpa-onnx 推理脚本（支持 --partial-file 增量 flush）
 │   ├── fetch_vendor.sh            # 拉 ffmpeg 静态二进制（arm64，~22MB，不入 git）
-│   └── make_app.sh                # 一键打包 .app
+│   └── make_app.sh                # 一键打包 .app + CLI 二进制
 ├── Resources/                     # AppIcon.icns / Info.plist（打包用）
 └── vendor/                        # 外部二进制本地缓存（git 忽略，运行 fetch_vendor.sh 获取）
 ```
@@ -220,6 +220,69 @@ bash scripts/make_app.sh
 ```
 
 更详细的环境准备、构建、调试、FAQ 见 **[DEVELOPMENT.md](./DEVELOPMENT.md)**。
+
+---
+
+## ⌨️ CLI：让 Agent 替你录音 / 转写 / 下载
+
+AudioNote 附带一个完整的命令行工具 `audio-note`，与 GUI **共享同一份数据、配置和任务库**。它的设计目标就是让 AI Agent（WorkBuddy / Claude Code / Cursor / 脚本）能直接调用。
+
+```bash
+# 安装 CLI
+swift build -c release
+sudo cp .build/arm64-apple-macosx/release/audio-note /usr/local/bin/
+
+# 验证
+$ audio-note --version
+0.3.0
+```
+
+### 三条最常用命令
+
+```bash
+# 1. 录制会议 → 自动转写
+audio-note record --mode mix --silence-timeout-min 15
+
+# 2. URL 一键下载+转写（B站/YouTube等）
+audio-note transcribe "https://www.bilibili.com/video/BV1xxx"
+
+# 3. Agent 模式：JSON Lines 输出（给脚本/Agent 消费）
+audio-note device list --json
+audio-note transcribe "https://..." --json
+```
+
+### 完整能力
+
+14 个子命令覆盖 6 大业务域，支持 `--json`（stdout 100% JSON Lines）+ BSD sysexits 退出码 + 单实例互斥锁（`--force-takeover`）。
+
+| 域 | 子命令 | 典型用途 |
+|----|--------|---------|
+| device | `list` `refresh` `default get/set` | 查看/切换音频设备（CLI/GUI 共享持久化） |
+| settings | `list` `get` `set` `reset` | 读写应用配置（`--raw` 裸值输出给脚本） |
+| library | `list` `show` `export` `delete` | 管理录音库与任务历史 |
+| record | （单个） | 录制系统音频/麦克风/混合 → wav |
+| transcribe | （单个） | 本地文件/URL → 自动下载+转写 |
+| download | （单个） | 下载远程音视频到本地 |
+
+详细用法、JSON Lines 协议规范（7 种事件类型）、退出码表、Agent 集成示例见 **[CLI.md](./CLI.md)**。
+
+> 💡 **WorkBuddy 用户**：本仓库已内置 `audio-note-cli` Skill（`.workbuddy/skills/audio-note-cli/`），可直接安装到你的 WorkBuddy 使用。
+
+### 和 GUI 的关系
+
+```
+               ┌────────────────────┐
+               │   AudioNoteCore    │  ← 共享核心
+               └──────┬──────┬──────┘
+                      │      │
+            ┌─────────▼┐  ┌──▼──────────┐
+            │  GUI .app│  │  audio-note  │  ← 双入口
+            └──────────┘  └─────────────┘
+```
+
+- 配置共享：CLI 的 `settings set` 和 GUI 的设置面板读同一个 UserDefaults suite
+- 任务共享：CLI 录制后可 `--auto-enqueue` 加入任务队列，GUI 下次启动看到并转写
+- 互斥：同一时间只有一个实例在跑（CLI 或 GUI）；`--force-takeover` 可让 CLI 接管
 
 ---
 
