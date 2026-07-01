@@ -12,6 +12,10 @@ struct AudioNoteApp: App {
     // 启动时拿到的互斥锁；只要 App 进程存活就持有
     @State private var lock: SingleInstanceLock?
 
+    // NSApplicationDelegate 桥接——最后一个窗口关闭时自动退出 App，
+    // 避免「关闭窗口 → 进程还在跑、锁未释放 → 点 dock 图标弹冲突框」的问题
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     var body: some Scene {
         WindowGroup {
             RootView()
@@ -123,4 +127,13 @@ struct AudioNoteApp: App {
     }
 
     private static var sigtermSource: DispatchSourceSignal?
+}
+
+/// NSApplicationDelegate 桥接
+///
+/// 当前职责：最后一个窗口关闭时自动退出 App（避免「关闭窗口 ≠ 退出进程」导致的 dock 冲突弹窗）
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        return true
+    }
 }

@@ -35,7 +35,10 @@ public final class SingleInstanceLock {
 
         public var description: String {
             let modeName = mode == .gui ? "GUI" : "CLI"
-            let fmt = ISO8601DateFormatter()
+            // 用 DateFormatter 显式带本地时区偏移（ISO8601DateFormatter 默认 UTC，不友好）
+            let fmt = DateFormatter()
+            fmt.dateFormat = "yyyy-MM-dd'T'HH:mm:ssZZZZZ"
+            fmt.locale = Locale(identifier: "en_US_POSIX")
             return "\(modeName) (PID \(pid), since \(fmt.string(from: startedAt)))"
         }
     }
