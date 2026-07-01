@@ -42,6 +42,12 @@
 - **GUI 接入互斥锁**：启动时 `SingleInstanceLock.acquire(mode: .gui)`，冲突弹 NSAlert；安装 SIGTERM 处理器以响应 `--force-takeover`
 - **TaskScheduler 持久化修复**：`loadPersisted()` 现在复用 snapshot 的 id/createdAt/downloadMode，避免每次启动后任务 ID 漂移（之前 `library show` 找不到任务的 root cause）
 
+### Docs & Skills — 2026-07-01
+
+- **CLI.md**：807 行完整命令参考，覆盖 14 个子命令的用法 / flag / JSON Lines 事件流 / 退出码 / 示例，含 JSON Lines 协议规范（7 种事件类型）和 Agent 集成示例（WorkBuddy / Shell / Python）
+- **README.md**：新增「⌨️ CLI」章节（快速开始下方），含三条常用命令、能力速查表、GUI/CLI 关系图；更新目录结构和架构图反映 multi-target 拆分
+- **skills/audio-note-cli.md**：内置 Agent Skill（平台无关），覆盖全部 14 个子命令 + JSON Lines 解析规则 + 退出码处理 + 互斥锁处理 + 4 个常用 workflow recipes；后续新 skill 直接放 `skills/<功能名>.md` 即可
+
 ### Installation
 
 ```bash
