@@ -20,7 +20,7 @@ struct AudioNote: AsyncParsableCommand {
     static var configuration = CommandConfiguration(
         commandName: "audio-note",
         abstract: "AudioNote CLI — 录音、转写、下载、库管理（与 GUI App 共享数据）",
-        version: "0.3.0",
+        version: AppVersion.current,
         subcommands: [
             DeviceCommand.self,
             RecordCommand.self,

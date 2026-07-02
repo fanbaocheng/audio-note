@@ -134,7 +134,7 @@ public final class SingleInstanceLock {
 
     private static func finalizeAcquire(fd: Int32, url: URL, mode: Mode) -> AcquireResult {
         // 写入 holder 信息
-        let holder = Holder(pid: getpid(), mode: mode, startedAt: Date(), version: "0.3.0")
+        let holder = Holder(pid: getpid(), mode: mode, startedAt: Date(), version: AppVersion.current)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         if let data = try? encoder.encode(holder) {
