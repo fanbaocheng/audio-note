@@ -381,7 +381,7 @@ struct SettingsView: View {
                 .buttonStyle(.bordered)
 
                 Button {
-                    if let url = URL(string: "https://github.com/ryanfan/audionote") {
+                    if let url = URL(string: "https://github.com/fanbaocheng/audio-note") {
                         NSWorkspace.shared.open(url)
                     }
                 } label: {
