@@ -48,6 +48,17 @@
 - **README.md**：新增「⌨️ CLI」章节（快速开始下方），含三条常用命令、能力速查表、GUI/CLI 关系图；更新目录结构和架构图反映 multi-target 拆分
 - **skills/audio-note-cli.md**：内置 Agent Skill（平台无关），覆盖全部 14 个子命令 + JSON Lines 解析规则 + 退出码处理 + 互斥锁处理 + 4 个常用 workflow recipes；后续新 skill 直接放 `skills/<功能名>.md` 即可
 
+### Fixed — 2026-07-01/02
+
+- **锁持有者时间戳时区错误**：`SingleInstanceLock.Holder.description` 使用 `ISO8601DateFormatter()`（默认 UTC），导致锁冲突对话框显示 UTC 时间而非本地时间；改用 `DateFormatter` + 显式时区偏移格式
+- **关闭窗口后 dock 点击弹冲突框**：SwiftUI 默认关闭窗口不退出 App，进程仍持有锁 → 再次 dock 点击时新进程拿不到锁弹冲突框；新增 `AppDelegate`（`applicationShouldTerminateAfterLastWindowClosed = true`），关闭窗口时自动退出释放锁
+- **项目主页链接错误**：关于页面「项目主页」指向 `github.com/ryanfan/audionote`，修正为 `github.com/fanbaocheng/audio-note`
+- **版本号多源混乱**：VERSION 文件 (`1.0.x`)、CLI `--version` (硬编码 `0.3.0`)、CHANGELOG (`0.3.0`) 三套版本号不一致。改为 VERSION 文件唯一真相源 → `make_app.sh` build 前生成 `Version.swift`（`AppVersion.current`）→ CLI/GUI/SingleInstanceLock 全部引用，不再硬编码
+
+### Added — 2026-07-01
+
+- **录制中静音倒计时提示**：RecordView 左卡片新增静音进度条 + 倒计时文字（`已静音 Mm:Ss / Mm:Ss`）；仅在 `silenceSeconds > 0` 时出现；状态文字从「录制中」自动切换为「静音中」；配色渐进警告（>80% 黄、>90% 红闪烁 1Hz）
+
 ### Installation
 
 ```bash
