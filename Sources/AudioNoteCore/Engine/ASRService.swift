@@ -279,9 +279,48 @@ public final class ASRService: ObservableObject {
             fullTranscript = partialText
         }
 
+        // 桥接：把滑窗转写结果写入 sidecar，批量转写可直接断点续转
+        flushPartialToSidecar()
+
         framesProvider = nil
         sampleRateProvider = nil
         partialAudioURL = nil
+    }
+
+    /// 将滑窗转写的 committedText 写入 *.partial.tsv，让后续 transcribeBatch 能跳过已转写段落。
+    /// sidecar 格式：每行 "index\ttext\n"，与 transcribe.py 的 --partial-file 机制兼容。
+    private func flushPartialToSidecar() {
+        guard !committedText.isEmpty,
+              let audioURL = partialAudioURL,
+              let sampleRate = sampleRateProvider?() else { return }
+
+        let chunkSec = 20.0  // 与 transcribe.py CHUNK_SEC 对齐
+        let chunkFrames = UInt64(sampleRate * chunkSec)
+        guard chunkFrames > 0 else { return }
+
+        let coveredChunks = Int(committedEndFrame / chunkFrames)
+        guard coveredChunks > 0 else { return }
+
+        let baseName = audioURL.deletingPathExtension().lastPathComponent
+        let outDir = audioURL.deletingLastPathComponent()
+        let partialURL = outDir.appendingPathComponent("\(baseName).partial.tsv")
+
+        var lines = ""
+        for i in 0..<(coveredChunks - 1) {
+            lines += "\(i)\t\n"
+        }
+        lines += "\(coveredChunks - 1)\t\(committedText)\n"
+
+        do {
+            try lines.write(to: partialURL, atomically: true, encoding: .utf8)
+            Logger.asr.info("滑窗→批量桥接 sidecar 已写入", metadata: [
+                "sidecar": partialURL.lastPathComponent,
+                "coveredChunks": coveredChunks,
+                "textChars": committedText.count
+            ])
+        } catch {
+            Logger.asr.warn("滑窗→批量桥接 sidecar 写入失败", metadata: ["error": error.localizedDescription])
+        }
     }
 
     // MARK: - 计时器

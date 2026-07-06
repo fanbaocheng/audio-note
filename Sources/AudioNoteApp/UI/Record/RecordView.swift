@@ -66,8 +66,8 @@ struct RecordView: View {
                 .foregroundStyle(silenceWarningColor)
                 .lineLimit(1)
 
-            // 静音倒计时（只在录制中且静音累积时显示）
-            if recorder.isRecording, !recorder.isPaused, recorder.silenceSeconds > 0 {
+            // 静音进度（录制中始终显示，静音 < 60s 为空条/灰色，≥ 60s 开始推进变色）
+            if recorder.isRecording, !recorder.isPaused {
                 silenceCountdown
             }
 
@@ -498,17 +498,22 @@ struct RecordView: View {
     private var stateText: String {
         if !recorder.isRecording { return "待机" }
         if recorder.isPaused { return "已暂停" }
-        if recorder.silenceSeconds > 0 { return "静音中" }
         return "录制中"
     }
 
-    /// 静音进度条 + 倒计时文字（只在静音累积时显示）
+    /// 静音进度条 + 倒计时文字（录制中始终显示，布局稳定不闪烁）
+    /// - silenceSeconds < 60s：空条 + 灰色 "00:00 / MM:SS"（静音未达阈值，不推进）
+    /// - silenceSeconds ≥ 60s：进度条从 0 开始推进 → 80% 黄 → 90% 红闪
     private var silenceCountdown: some View {
-        let ratio = min(1.0, recorder.silenceSeconds / recorder.silenceTimeoutSec)
-        let color = silenceWarningColor
+        let thresholdSec: TimeInterval = 60
+        let effectiveSilence = max(0, recorder.silenceSeconds - thresholdSec)
+        let effectiveTotal = max(1, recorder.silenceTimeoutSec - thresholdSec)
+        let ratio = min(1.0, effectiveSilence / effectiveTotal)
+        let isCounting = recorder.silenceSeconds >= thresholdSec
+        let color: Color = isCounting ? silenceWarningColor : .secondary
 
         return VStack(spacing: 4) {
-            // 进度条（从空到满）
+            // 进度条
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 2)
@@ -522,14 +527,20 @@ struct RecordView: View {
             }
             .frame(height: 4)
 
-            // 倒计时文字
+            // 时间文字（格式固定，不闪）
             HStack(spacing: 4) {
-                Image(systemName: "mic.slash.fill")
-                    .font(.caption2)
-                    .foregroundStyle(color)
-                Text("已静音 \(formattedSilenceSeconds()) / \(formattedSilenceTimeout())")
+                if isCounting {
+                    Image(systemName: "mic.slash.fill")
+                        .font(.caption2)
+                        .foregroundStyle(color)
+                } else {
+                    Image(systemName: "mic.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.quaternary)
+                }
+                Text("\(formattedSilenceSeconds()) / \(formattedSilenceTimeout())")
                     .font(.caption)
-                    .foregroundStyle(color)
+                    .foregroundStyle(isCounting ? color : .secondary.opacity(0.4))
                     .monospacedDigit()
             }
         }
@@ -537,17 +548,16 @@ struct RecordView: View {
         .padding(.vertical, 2)
     }
 
-    /// 静音进度颜色：正常 → 80% 黄 → 90% 红闪烁
+    /// 静音进度颜色：< 80% 灰 / ≥ 80% 黄 / ≥ 90%（总时长）红闪烁
+    /// 注意：前 60s 不推进不计数，颜色从 silenceSeconds ≥ 60s 开始生效
     private var silenceWarningColor: Color {
-        if recorder.silenceSeconds <= 0 { return .secondary }
-        let ratio = recorder.silenceSeconds / recorder.silenceTimeoutSec
+        let threshold: TimeInterval = 60
+        guard recorder.silenceSeconds >= threshold else { return .secondary }
+        let ratio = (recorder.silenceSeconds - threshold) / max(1, recorder.silenceTimeoutSec - threshold)
         if ratio >= 0.9 {
-            // 最后 10%：红/灰交替闪烁（约 1 Hz）
             return Int(Date().timeIntervalSince1970 * 1.0).isMultiple(of: 2) ? .red : .secondary
         }
         if ratio >= 0.8 { return .orange }
-        // 正在静音但未到警告阈值
-        if recorder.silenceSeconds > 0 { return .secondary }
         return .secondary
     }
 
