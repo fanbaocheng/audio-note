@@ -17,6 +17,33 @@ import Foundation
 /// - 路径设置改走 `Config` 包结构，UnifiedPipeline 直接传 `config`
 /// - 日志改走 Logger.download（替代 MD 的 `AppLog`）
 /// - 错误类型对齐 `EngineError`（已在 AudioProcessingEngine.swift 扩展 cancelled / parseFailed）
+/// 简易异步信号量，用于限制并发下载数量
+private actor DownloadSemaphore {
+    private var permits: Int
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    init(permits: Int) { self.permits = max(1, permits) }
+    func acquire() async {
+        if permits > 0 { permits -= 1; return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+    func release() {
+        if let first = waiters.first { waiters.removeFirst(); first.resume() }
+        else { permits += 1 }
+    }
+    func updatePermits(_ n: Int) {
+        let target = max(1, n)
+        if target > permits {
+            var toGrant = target - permits
+            while toGrant > 0, let w = waiters.first {
+                waiters.removeFirst(); w.resume(); toGrant -= 1
+            }
+            permits += toGrant
+        } else {
+            permits = target
+        }
+    }
+}
+
 @MainActor
 public final class DownloadEngine {
     public static let shared = DownloadEngine()
@@ -30,6 +57,10 @@ public final class DownloadEngine {
     }
 
     public var config = Config()
+
+    // 并发下载限制：保证同时运行的下载数不超过 TaskScheduler.maxConcurrentDownloads（默认 3）。
+    // 之前该字段只是展示用、从未被强制，导致一次性入队 N 个任务会同时发起 N 个 yt-dlp 进程。
+    private static let downloadSemaphore = DownloadSemaphore(permits: 3)
 
     // MARK: - 公共 API
 
@@ -119,13 +150,19 @@ public final class DownloadEngine {
 
         args.append(url)
 
+        // 限制同时运行的下载数量（与 maxConcurrentDownloads 对齐）
+        await Self.downloadSemaphore.updatePermits(TaskScheduler.shared.maxConcurrentDownloads)
         let outputURL: URL
         do {
+            await Self.downloadSemaphore.acquire()
             outputURL = try await runYtdlp(task: task, ytdlp: ytdlp, args: args)
+            await Self.downloadSemaphore.release()
         } catch let err as EngineError {
+            await Self.downloadSemaphore.release()
             task.status = .failed(err.localizedDescription)
             throw err
         } catch {
+            await Self.downloadSemaphore.release()
             task.status = .failed(error.localizedDescription)
             throw EngineError.downloadFailed(error.localizedDescription)
         }
@@ -253,6 +290,8 @@ public final class DownloadEngine {
                         Logger.download.error("失败: \(msg)")
                         cont.resume(throwing: EngineError.downloadFailed(msg))
                     }
+                    // 下载结束后清掉 process 引用，避免后续 cancel/pause 对已经退出的进程误 terminate
+                    task.process = nil
                 }
             }
 

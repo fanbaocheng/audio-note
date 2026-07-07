@@ -64,6 +64,7 @@ public final class SingleInstanceLock {
     private let fd: Int32
     private let url: URL
     public let mode: Mode
+    private var released = false
 
     private init(fd: Int32, url: URL, mode: Mode) {
         self.fd = fd
@@ -151,6 +152,8 @@ public final class SingleInstanceLock {
 
     /// 主动释放（在正常退出时被 atexit hook 调用）
     public func release() {
+        guard !released else { return }
+        released = true
         if fd >= 0 {
             ftruncate(fd, 0)
             flock(fd, LOCK_UN)

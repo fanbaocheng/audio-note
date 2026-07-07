@@ -171,13 +171,19 @@ public final class TaskScheduler: ObservableObject {
     }
 
     /// 提交录制转写
-    public func enqueueRecording(fileURL: URL) {
+    /// - Parameter startImmediately: true（默认，GUI 用）立即起转写；false（CLI 用）只入队并返回 task，
+    ///   由调用方自行 await 转写完成（CLI 必须在 exit 前 await，否则会被 exit 杀掉）。
+    @discardableResult
+    public func enqueueRecording(fileURL: URL, startImmediately: Bool = true) -> UniTask {
         let task = UniTask(inputType: .recording, sourceFilePath: fileURL.path)
         task.title = "录制 \(DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short))"
         enqueue(task)
-        Task {
-            await UnifiedPipeline.shared.processRecording(task: task, fileURL: fileURL)
+        if startImmediately {
+            Task {
+                await UnifiedPipeline.shared.processRecording(task: task, fileURL: fileURL)
+            }
         }
+        return task
     }
 
     /// 提交文件导入
@@ -227,6 +233,37 @@ public final class TaskScheduler: ObservableObject {
             )
             task.restore(from: snap)
             allTasks.append(task)
+        }
+    }
+
+    // MARK: - 启动后自动续跑
+
+    /// App 启动后调用：把上次未完成的任务（pending / downloaded / 被中断的 interrupted→pending）
+    /// 重新跑起来，让下载/转写进度在 App 重启后自动续跑。
+    /// 断点续传由各自的机制保证：下载靠 yt-dlp 的 .part 文件、转写靠 ASRService 的 *.partial.tsv sidecar。
+    public func resumePersistedTasks() {
+        let resumable = allTasks.filter { task in
+            switch task.status {
+            case .pending, .downloaded: return true
+            default: return false
+            }
+        }
+        for task in resumable {
+            Logger.scheduler.info("重启后自动续跑任务", metadata: ["id": task.id.uuidString.prefix(8), "type": task.inputType.rawValue, "status": task.status.displayText])
+            relaunch(task)
+        }
+    }
+
+    private func relaunch(_ task: UniTask) {
+        switch task.inputType {
+        case .urlDownload:
+            Task { await UnifiedPipeline.shared.processDownload(task: task) }
+        case .recording:
+            guard let p = task.sourceFilePath else { return }
+            Task { await UnifiedPipeline.shared.processRecording(task: task, fileURL: URL(fileURLWithPath: p)) }
+        case .fileImport:
+            guard let p = task.sourceFilePath else { return }
+            Task { await UnifiedPipeline.shared.processFileImport(task: task, fileURL: URL(fileURLWithPath: p)) }
         }
     }
 }

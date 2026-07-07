@@ -91,16 +91,37 @@ public final class ASRService: ObservableObject {
     /// 断点续转：在 outputDir 下放 `<basename>.partial.tsv` 作为 sidecar，
     /// 转写过程中每段完成立即追加「index\ttext\n」。下次调用 transcribeBatch 时检测此文件，
     /// 取最大 index+1 作为 resume-from-segment 传给 transcribe.py 跳过前面已完成段。
+    /// 串行化入口：多个并发转写请求会排队依次执行，而不是互相抛"已有转写运行"错误。
+    /// 之前用 `guard !isTranscribing` 直接拒绝，导致 UnifiedPipeline 不限并发时（maxConcurrentDownloads>1）
+    /// 多个下载同时完成会并发调本方法，2/3 直接抛错失败。
+    private var transcriptionChain: Task<(text: String, txtURL: URL, srtURL: URL), Error>?
+
     public func transcribeBatch(
         audioURL: URL,
         title: String,
         outputDir: URL? = nil,
         task: UniTask? = nil
     ) async throws -> (text: String, txtURL: URL, srtURL: URL) {
-        guard !isTranscribing else {
-            throw EngineError.transcribeFailed("已有转写在运行中")
+        if let chain = transcriptionChain {
+            // 已有转写在进行：等它结束后串行重试，保证不丢请求、不抛错
+            _ = try? await chain.value
+            return try await transcribeBatch(audioURL: audioURL, title: title, outputDir: outputDir, task: task)
         }
+        let runner = Task { [self] in
+            try Task.checkCancellation()
+            return try await transcribeBatchImpl(audioURL: audioURL, title: title, outputDir: outputDir, task: task)
+        }
+        transcriptionChain = runner
+        defer { transcriptionChain = nil }
+        return try await runner.value
+    }
 
+    private func transcribeBatchImpl(
+        audioURL: URL,
+        title: String,
+        outputDir: URL? = nil,
+        task: UniTask? = nil
+    ) async throws -> (text: String, txtURL: URL, srtURL: URL) {
         Logger.asr.info("开始批量转写", metadata: ["audio": audioURL.lastPathComponent, "title": title])
 
         isTranscribing = true

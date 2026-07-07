@@ -235,9 +235,9 @@ enum SignalHandler {
     }
 
     private static func handle() {
+        // 仅触发业务回调（停止录音 / 释放锁）。真正的退出由主循环检测到停止标志后
+        // 走正常的 teardown（enqueue + await 转写 + exit）完成，避免在信号上下文里直接 exit(0)
+        // 导致录制/转写结果在写入磁盘前被进程终止而丢失。
         shutdownCallback?()
-        // 给业务回调 2 秒清理后退出
-        // 注意：在 signal handler 里不能 sleep，所以由业务自己保证回调能在 atexit 之前完成
-        exit(0)
     }
 }

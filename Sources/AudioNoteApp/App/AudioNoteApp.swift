@@ -28,6 +28,7 @@ struct AudioNoteApp: App {
                     acquireSingleInstanceLock()
                     installSigtermHandler()
                     applyPersistedSettings()
+                    TaskScheduler.shared.resumePersistedTasks()
                 }
         }
         .windowStyle(.titleBar)

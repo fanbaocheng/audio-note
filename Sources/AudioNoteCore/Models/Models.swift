@@ -283,7 +283,7 @@ public final class UniTask: ObservableObject, Identifiable {
         case .failed(let m):     self.status = .failed(m)
         case .cancelled:         self.status = .cancelled
         case .skipped(let u):    self.status = .skippedTranscribe(u); progress = 1.0
-        case .interrupted:       self.status = .cancelled
+        case .interrupted:       self.status = .pending
         }
     }
 }

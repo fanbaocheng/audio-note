@@ -1,5 +1,5 @@
 import XCTest
-@testable import AudioNote
+@testable import AudioNoteCore
 
 @MainActor
 final class AudioNoteTests: XCTestCase {

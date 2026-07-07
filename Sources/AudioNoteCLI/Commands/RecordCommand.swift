@@ -161,14 +161,19 @@ struct RecordCommand: AsyncParsableCommand {
         let finalURL = engine.stopRecording()
         if !common.json { CLIOut.logErr("") } // 换行
 
+        // 录音设备已释放，提前释放互斥锁，避免转写阶段长时间占用 GUI 启动名额
+        lock.release()
+
         guard let outURL = finalURL else {
             CLIOut.error("录音过短或失败，未生成文件", code: "RECORD_EMPTY")
             throw ExitCodeWrapper(74)
         }
 
-        // 可选入队
+        // 可选入队并等待转写完成：CLI 进程必须在 exit 前确保转写已落盘，
+        // 否则 exit(0) 会把后台转写子进程一并杀掉（之前的 bug）。
         if autoEnqueue {
-            TaskScheduler.shared.enqueueRecording(fileURL: outURL)
+            let task = TaskScheduler.shared.enqueueRecording(fileURL: outURL, startImmediately: false)
+            await UnifiedPipeline.shared.processRecording(task: task, fileURL: outURL)
             TaskScheduler.shared.persist()
         }
 

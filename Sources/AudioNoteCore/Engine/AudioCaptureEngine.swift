@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import CoreAudio
+import os
 
 // MARK: - 录制模式
 
@@ -38,6 +39,10 @@ private final class CaptureState {
     var renderBuffer: UnsafeMutablePointer<Float>?
     var renderBufferCapacity: Int = 0
 
+    /// 跨线程计数安全：以下字段在音频实时线程（AUHAL 回调）写、主线程（tick / 诊断）读，
+    /// 用一把不公平锁保护，避免数据竞争（Atomic 要求 macOS 15，项目部署目标为 13，故用锁）。
+    let lock = OSAllocatedUnfairLock()
+
     /// RMS 累积（C 回调写入，主线程定时读取）
     var rmsSum: Float = 0
     var rmsCount: Int = 0
@@ -53,16 +58,20 @@ private final class CaptureState {
     var tag: String = "main"
 
     func addRMS(_ rms: Float) {
-        rmsSum += rms
-        rmsCount += 1
+        lock.withLock {
+            rmsSum += rms
+            rmsCount += 1
+        }
     }
 
     func drainRMS() -> Float {
-        guard rmsCount > 0 else { return 0 }
-        let avg = rmsSum / Float(rmsCount)
-        rmsSum = 0
-        rmsCount = 0
-        return avg
+        let (sum, cnt) = lock.withLock { (rmsSum, rmsCount) }
+        lock.withLock {
+            rmsSum = 0
+            rmsCount = 0
+        }
+        guard cnt > 0 else { return 0 }
+        return sum / Float(cnt)
     }
 
     func ensureBuffer(_ frames: Int) -> UnsafeMutablePointer<Float> {
@@ -247,7 +256,7 @@ public final class AudioCaptureEngine: ObservableObject {
 
     /// 当前已采集的总帧数（实时转写游标用；混录时返回系统音频那一路）
     public var capturedFrames: UInt64 {
-        recordingMode == .microphone ? micState.totalFrames : systemState.totalFrames
+        recordingMode == .microphone ? micState.lock.withLock { micState.totalFrames } : systemState.lock.withLock { systemState.totalFrames }
     }
     /// 当前采集采样率（实时转写用）
     public var captureSampleRate: Double {
@@ -562,12 +571,14 @@ public final class AudioCaptureEngine: ObservableObject {
             return false
         }
 
-        // 重置计数器
-        state.rmsSum = 0; state.rmsCount = 0
-        state.totalFrames = 0
-        state.callbackCount = 0
-        state.lastRenderError = 0
-        state.flushCounter = 0
+        // 重置计数器（加锁保护跨线程访问）
+        state.lock.withLock {
+            state.rmsSum = 0; state.rmsCount = 0
+            state.totalFrames = 0
+            state.callbackCount = 0
+            state.lastRenderError = 0
+            state.flushCounter = 0
+        }
         return true
     }
 
@@ -620,8 +631,8 @@ public final class AudioCaptureEngine: ObservableObject {
 
         restoreSystemOutput()
 
-        Logger.recording.info("诊断 sys: cb=\(systemState.callbackCount) frames=\(systemState.totalFrames) err=\(systemState.lastRenderError) sr=\(systemState.captureSampleRate)")
-        Logger.recording.info("诊断 mic: cb=\(micState.callbackCount) frames=\(micState.totalFrames) err=\(micState.lastRenderError) sr=\(micState.captureSampleRate)")
+        Logger.recording.info("诊断 sys: cb=\(systemState.lock.withLock { systemState.callbackCount }) frames=\(systemState.lock.withLock { systemState.totalFrames }) err=\(systemState.lock.withLock { systemState.lastRenderError }) sr=\(systemState.captureSampleRate)")
+        Logger.recording.info("诊断 mic: cb=\(micState.lock.withLock { micState.callbackCount }) frames=\(micState.lock.withLock { micState.totalFrames }) err=\(micState.lock.withLock { micState.lastRenderError }) sr=\(micState.captureSampleRate)")
 
         let elapsedNow = elapsedTime
         isRecording = false; isPaused = false; rmsLevel = 0
@@ -866,14 +877,14 @@ private func audioRenderCallback(
         )
     )
 
-    state.callbackCount &+= 1
+    state.lock.withLock { state.callbackCount += 1 }
     let status = AudioUnitRender(au, ioActionFlags, inTimeStamp, inBusNumber, inNumberFrames, &bufferList)
     guard status == noErr else {
-        state.lastRenderError = status
+        state.lock.withLock { state.lastRenderError = status }
         return noErr
     }
 
-    state.totalFrames &+= UInt64(fc)
+    state.lock.withLock { state.totalFrames &+= UInt64(fc) }
 
     var sum: Float = 0
     for i in 0..<fc { sum += buffer[i] * buffer[i] }
@@ -886,8 +897,11 @@ private func audioRenderCallback(
             int16Samples[i] = Int16(max(-1.0, min(1.0, buffer[i])) * 32767.0)
         }
         int16Samples.withUnsafeBytes { _ = fwrite($0.baseAddress, 1, $0.count, file) }
-        state.flushCounter &+= 1
-        if state.flushCounter % 50 == 0 {
+        let shouldFlush = state.lock.withLock { () -> Bool in
+            state.flushCounter &+= 1
+            return state.flushCounter % 50 == 0
+        }
+        if shouldFlush {
             fflush(file)
         }
     }
